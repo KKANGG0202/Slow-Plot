@@ -896,9 +896,9 @@ function renderIdeas(arc) {
             </div>
         </div>`).join('');
     return `
-    <details class="sb-ideabox" ${ideaOpen ? 'open' : ''}>
-        <summary data-act="ideaToggle"><i class="fa-solid fa-dice"></i> 아이디어가 없다면? 추천받기</summary>
-        <div class="sb-ideabody">
+    <div class="sb-ideabox">
+        <button type="button" class="sb-fold-head" data-act="ideaToggle" aria-expanded="${ideaOpen}"><i class="fa-solid ${ideaOpen ? 'fa-caret-down' : 'fa-caret-right'}"></i> <i class="fa-solid fa-dice"></i> 아이디어가 없다면? 추천받기</button>
+        ${ideaOpen ? `<div class="sb-ideabody">
             <div class="sb-group">
                 <label class="sb-sub sb-block" for="sb_idea_kw">키워드 <span>(안 써도 돼요)</span></label>
                 <input id="sb_idea_kw" class="sb-input" data-bind="ideaKeywords" placeholder="예: 축제, 비밀, 라이벌" value="${esc(s.ideaKeywords)}">
@@ -916,8 +916,8 @@ function renderIdeas(arc) {
                 ${loading ? '<i class="fa-solid fa-spinner fa-spin"></i> 고민하는 중…' : `<i class="fa-solid fa-dice"></i> ${arc.ideas?.length ? '다른 아이디어 3개' : '아이디어 3개 받기'}`}
             </button>
             ${cards ? `<div class="sb-ideas">${cards}</div>` : ''}
-        </div>
-    </details>`;
+        </div>` : ''}
+    </div>`;
 }
 
 function renderRefs(arc) {
@@ -956,16 +956,16 @@ function renderRefs(arc) {
             ${chip(`${c.name2} 캐릭터 설정`, s.useChar, 'useChar', '1')}
             ${chip(`${c.name1} 페르소나`, s.usePersona, 'usePersona', '1')}
         </div>
-        <details class="sb-wi" ${wiOpen ? 'open' : ''}>
-            <summary data-act="wiToggle">월드인포 고르기 <span class="sb-sub">(${wiCount(arc)}개 선택됨)</span></summary>
-            ${books.length ? `
+        <div class="sb-wi">
+            <button type="button" class="sb-fold-head" data-act="wiToggle" aria-expanded="${wiOpen}"><i class="fa-solid ${wiOpen ? 'fa-caret-down' : 'fa-caret-right'}"></i> 월드인포 고르기 <span class="sb-sub sb-wi-count">(${wiCount(arc)}개 선택됨)</span></button>
+            ${!wiOpen ? '' : books.length ? `
             <select class="sb-input" data-wibook>
                 <option value="">로어북 고르기</option>
                 ${books.map(b => `<option value="${esc(b)}" ${b === s.wiBook ? 'selected' : ''}>${linked.includes(b) ? '★ ' : ''}${esc(b)}${s.wi[b]?.length ? ` (${s.wi[b].length})` : ''}</option>`).join('')}
             </select>
             <p class="sb-sub">★ 표시는 이 캐릭터나 채팅에 연결된 로어북이에요</p>
             ${entriesHtml}` : '<p class="sb-sub">로어북이 없어요</p>'}
-        </details>
+        </div>
     </div>`;
 }
 
@@ -1119,8 +1119,12 @@ function renderLog(arc) {
 function renderAdvanced() {
     const s = getSettings();
     return `
-    <details class="sb-card sb-adv" ${advOpen ? 'open' : ''}>
-        <summary class="sb-label" data-act="advToggle">세부 설정</summary>
+    <div class="sb-card sb-adv">
+        <button type="button" class="sb-card-head" data-act="advToggle" aria-expanded="${advOpen}">
+            <span>세부 설정</span>
+            <i class="fa-solid ${advOpen ? 'fa-chevron-up' : 'fa-chevron-down'}"></i>
+        </button>
+        ${advOpen ? `
         <label class="sb-sub sb-block">과정 만들기 · 판정에 쓸 API
             <select class="sb-input sb-wide" data-setting="profileId">
                 <option value="">지금 채팅 연결 그대로</option>
@@ -1147,7 +1151,8 @@ function renderAdvanced() {
         </label>
         ${renderPromptEditor()}
         <button type="button" class="sb-btn sb-danger" data-act="reset">이 채팅의 과정 지우기</button>
-    </details>`;
+        ` : ''}
+    </div>`;
 }
 
 let promptKey = 'inject';
@@ -1243,9 +1248,9 @@ async function onClick(e) {
     const act = btn.dataset.act;
     const val = btn.dataset.value;
     if (act === 'toggleSetup') { setupOpen = !setupOpen; render(); return; }
-    if (act === 'wiToggle') { wiOpen = !wiOpen; return; }
-    if (act === 'ideaToggle') { ideaOpen = !ideaOpen; return; }
-    if (act === 'advToggle') { advOpen = !advOpen; return; }
+    if (act === 'wiToggle') { wiOpen = !wiOpen; render(); return; }
+    if (act === 'ideaToggle') { ideaOpen = !ideaOpen; render(); return; }
+    if (act === 'advToggle') { advOpen = !advOpen; render(); return; }
     if (act === 'promptReset' || act === 'promptExport' || act === 'promptImport') {
         await onPromptAction(act);
         return;
@@ -1452,7 +1457,7 @@ function onInput(e) {
         if (el.checked) list.add(uid); else list.delete(uid);
         if (list.size) arc.setup.wi[book] = [...list]; else delete arc.setup.wi[book];
         save();
-        const counter = document.querySelector('#sb_root .sb-wi summary .sb-sub');
+        const counter = document.querySelector('#sb_root .sb-wi-count');
         if (counter) counter.textContent = `(${wiCount(arc)}개 선택됨)`;
         return;
     }

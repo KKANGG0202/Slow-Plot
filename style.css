@@ -244,9 +244,7 @@
 #sb_root .sb-idea-go { margin-top: 2px; }
 
 /* other collapsible sections: give their children breathing room */
-#sb_root .sb-wi > *:not(summary),
-#sb_root .sb-en > *:not(summary),
-#sb_root .sb-adv > *:not(summary) { margin-top: 12px; }
+#sb_root .sb-en > *:not(summary) { margin-top: 12px; }
 
 /* inner feelings hint */
 #sb_root .sb-inner {
@@ -269,3 +267,14 @@
 #sb_root .sb-title-icon { display: inline-block; width: 1.2em; height: 1.2em; margin-right: 2px; vertical-align: -0.22em; overflow: visible; }
 #sb_root .sb-logo { background: #fff; box-shadow: 0 4px 0 var(--sb-line); }
 #sb_root .sb-logo .sb-snail { width: 30px; height: 30px; }
+
+/* fold toggles (replace <details>, which some themes/WebViews render open) */
+#sb_root .sb-fold-head {
+    all: unset; cursor: pointer; display: flex; align-items: center; gap: 6px;
+    min-height: 36px; font-size: 14px; color: var(--sb-purple);
+}
+#sb_root .sb-fold-head:focus-visible { outline: 2px solid var(--sb-purple); border-radius: 8px; }
+#sb_root .sb-wi { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
+#sb_root .sb-ideabox { padding: 4px 12px; }
+#sb_root .sb-ideabody { padding-bottom: 12px; }
+#sb_root .sb-adv { gap: 12px; }
