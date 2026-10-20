@@ -18,6 +18,7 @@ const defaultSettings = Object.freeze({
     judgeWindow: 20,     // how many recent messages the judge reads
     profileId: '',       // connection profile for planning/judging; '' = current connection
     prompts: {},         // user overrides of DEFAULT_PROMPTS, keyed by prompt id
+    miniBar: true,       // small progress strip above the chat input
 });
 
 const PRESETS = {
@@ -82,9 +83,10 @@ function newArc() {
         stageStarts: [],      // progress value at each stage's start
         lastJudge: 0,
         hold: false,          // stay mode: keep injecting the current chapter but never advance
-        frozenAt: null,
+        frozenAt: null,       // bot-reply count when paused/held; replies meanwhile are not counted
         countMode: 'bot',     // progress counts bot replies only
-        eventPending: false,  // a surprise event goes into the next reply       // message count when paused/held; those chats are not counted
+        eventPending: false,  // a surprise event goes into the next reply
+        nudgePending: false,  // one firmer push in the next reply
         ideas: [],            // last story suggestions: { title, story, ending, moods[] }
         inner: null,          // { text, warmth, at } — char's hidden feelings, for the hint box
         log: [],
@@ -277,9 +279,12 @@ const DEFAULT_PROMPTS = Object.freeze({
         'Obstacles in play: {{obstacles}}',
         'How {{char}} behaves: {{difficulty}}',
         'Current chapter ({{chapter_num}}/{{chapter_total}}): {{chapter}}',
+        'Mood of this chapter: {{chapter_mood}}',
+        'Who drives this chapter: {{lead}}',
         'Pacing: {{pacing}}',
         '{{foreshadow}}',
         '{{event}}',
+        '{{nudge}}',
         'Rules:',
         '- The scene in progress and {{user}}\'s actions always come first. Follow them fully; never steer away from what {{user}} is doing.',
         '- Use this direction only where it fits naturally. It is completely fine for a reply not to touch it at all.',
@@ -298,6 +303,8 @@ const DEFAULT_PROMPTS = Object.freeze({
         'Characters:',
         '- {{char}}: {{char_description}}',
         '- {{user}}: {{persona}}',
+        '',
+        'Cast in this chat: {{cast}}',
         '',
         'Story outline from the user:',
         '{{story}}',
@@ -367,6 +374,7 @@ const DEFAULT_PROMPTS = Object.freeze({
     obstacles: 'Include obstacles: bring in {{obstacle_detail}} and weave them into the chapters so they get in the way of the story\'s direction and raise the stakes.',
     foreshadow: 'Foreshadowing: if it fits naturally, let this small detail surface in passing, without explaining it or drawing attention to it: {{seed}}',
     breather: 'This reply is a breather. Do not push the story\'s direction at all; let the moment be ordinary and unhurried, following whatever {{user}} is doing.',
+    nudge: 'For this reply only: if the scene allows it at all, move this chapter forward by one clear, believable step. Still follow {{user}}\'s lead and do not jump ahead to later developments.',
     event: 'For this reply only: let one small unexpected event happen that fits the current scene and chapter (an interruption, a discovery, a visitor, a mishap, a sudden change of plans or weather). Keep it proportionate, do not resolve it, and leave room for {{user}} to react.',
     inner: [
         'Read the recent roleplay and describe what {{char}} is privately feeling right now about {{user}} and the situation: the thoughts {{char}} would never say out loud.',
@@ -391,7 +399,7 @@ const PLAN_FORMAT = [
     'Work in English: design every chapter fully in the English fields first. The Korean fields come last and are natural Korean renderings of what you already wrote in English, not new ideas.',
     'Return JSON only, in exactly this shape and field order:',
     '{"arc":{"premise":"<the overall story in 1-2 English sentences>","ending":"<the destination in English, or empty>","tone":"<tone in English, one short phrase>","notes":"<things to keep, in English, or empty>","obstacles":"<the obstacle characters or situations in one English sentence, or empty>"},',
-    ' "chapters":[{"title_en":"<short English title>","guide_en":"<2-3 English sentences on what unfolds in this chapter and how it feels>","chats":<integer>,"seed_en":"<one small, concrete English detail to plant during this chapter that quietly foreshadows the next chapter without revealing it (an object, a habit, a passing remark); empty for the last chapter>","title_ko":"<the title in natural Korean>","summary_ko":"<the guide condensed into one or two natural Korean sentences>"}]}',
+    ' "chapters":[{"title_en":"<short English title>","guide_en":"<2-3 English sentences on what unfolds in this chapter and how it feels>","chats":<integer>,"lead":"<who mainly drives this chapter: one name from the cast, or a side character; in a group chat, spread the spotlight across members>","mood_en":"<the emotional mood of this chapter in 1-3 English words; let it shift across chapters to form an arc>","seed_en":"<one small, concrete English detail to plant during this chapter that quietly foreshadows the next chapter without revealing it (an object, a habit, a passing remark); empty for the last chapter>","title_ko":"<the title in natural Korean>","summary_ko":"<the guide condensed into one or two natural Korean sentences>","mood_ko":"<the chapter mood in 1-3 Korean words>"}]}',
 ].join('\n');
 const IDEAS_FORMAT = [
     '',
@@ -401,20 +409,20 @@ const IDEAS_FORMAT = [
 const INNER_FIELDS = '"inner_ko": "<one short Korean line: {{char}}\'s private, unspoken feeling right now, in {{char}}\'s own inner voice>", "warmth": <integer 0-100: how open {{char}} currently is toward {{user}}>';
 
 function judgeFormat(regress, inner) {
-    const fields = ['"done": true or false', '"reason_ko": "<one short Korean sentence explaining why>"'];
+    const fields = ['"done": true or false', '"reason_ko": "<one short Korean sentence explaining why>"', '"detail_ko": "<2-4 Korean sentences: what has already happened toward this chapter, and what is still missing before it can be called done>"'];
     if (regress) fields.push('"regress": <true only if {{user}}\'s recent actions clearly pushed things back to before this chapter began, otherwise false>');
     if (inner) fields.push(INNER_FIELDS);
     return `\n\nAnswer with JSON only: {${fields.join(', ')}}`;
 }
 
 const PROMPT_INFO = {
-    inject: { label: '매 턴 들어가는 방향 문장', vars: 'char, user, story, ending, tone, notes, obstacles, difficulty, chapter, chapter_num, chapter_total, pacing, foreshadow, event' },
+    inject: { label: '매 턴 들어가는 방향 문장', vars: 'char, user, story, ending, tone, notes, obstacles, difficulty, chapter, chapter_num, chapter_total, chapter_mood, lead, pacing, foreshadow, event, nudge' },
     paceEarly: { label: '페이스: 막 시작됐을 때', vars: 'char, user' },
     paceMid: { label: '페이스: 스며드는 중', vars: 'char, user' },
     paceLate: { label: '페이스: 무르익는 중', vars: 'char, user' },
     paceOver: { label: '페이스: 충분히 익었을 때', vars: 'char, user' },
     paceHold: { label: '페이스: 머물기 중', vars: 'char, user' },
-    plan: { label: '과정 만들기', vars: 'char, user, char_description, persona, story, ending, tone, keep, difficulty, obstacles, world_info, recent_chat, length, chapter_count', fixed: true },
+    plan: { label: '과정 만들기', vars: 'char, user, cast, char_description, persona, story, ending, tone, keep, difficulty, obstacles, world_info, recent_chat, length, chapter_count', fixed: true },
     judge: { label: '단계 판정', vars: 'char, user, chapter, next_chapter, recent_messages, difficulty_judge', fixed: true },
     ideas: { label: '아이디어 추천', vars: 'char, user, char_description, persona, world_info, recent_chat, tone, keywords, spice, tropes, ending_dir, focus, exclude, variation_of, obstacles, avoid, count', fixed: true },
     diffEasy: { label: '난이도: 순한맛 태도', vars: 'char, user' },
@@ -427,6 +435,7 @@ const PROMPT_INFO = {
     foreshadow: { label: '복선 심기', vars: 'char, user, seed' },
     breather: { label: '숨 고르기 턴', vars: 'char, user' },
     event: { label: '돌발 사건', vars: 'char, user' },
+    nudge: { label: '한 번만 살짝 밀기', vars: 'char, user' },
 };
 
 function getPrompt(key) {
@@ -491,6 +500,7 @@ function buildInjection(arc) {
     const seed = su.foreshadow && !breather && st.seed_en && nextReply % 3 === 0
         ? fillTemplate(getPrompt('foreshadow'), { ...base, seed: st.seed_en }) : '';
     const event = arc.eventPending && !breather ? fillTemplate(getPrompt('event'), base) : '';
+    const nudge = arc.nudgePending && !breather && !arc.hold ? fillTemplate(getPrompt('nudge'), base) : '';
     return fillTemplate(getPrompt('inject'), {
         ...base,
         story: en.premise || arc.setup.plot,
@@ -505,6 +515,9 @@ function buildInjection(arc) {
         pacing,
         foreshadow: seed,
         event,
+        nudge,
+        chapter_mood: st.mood_en || st.mood_ko || '',
+        lead: st.lead || '',
     });
 }
 
@@ -633,6 +646,22 @@ function moodList(arc) {
     return moods;
 }
 
+// Names in this chat: group members in a group chat, otherwise the bot; plus the user.
+function castNames() {
+    const c = ctx();
+    const names = [];
+    if (c.groupId) {
+        const g = (c.groups || []).find(x => x.id === c.groupId);
+        for (const av of g?.members || []) {
+            const ch = (c.characters || []).find(x => x.avatar === av);
+            if (ch?.name) names.push(ch.name);
+        }
+    }
+    if (!names.length && c.name2) names.push(c.name2);
+    if (c.name1) names.push(c.name1);
+    return [...new Set(names)];
+}
+
 function recentChatBlock(count, maxEach) {
     const recent = ctx().chat.filter(m => !m.is_system).slice(-count);
     if (!recent.length) return '';
@@ -664,6 +693,7 @@ async function generateStages(arc) {
         obstacles: obstacleText(arc, { char: c.name2, user: c.name1 }),
         world_info: lore ? `World info (background facts; do not contradict them):\n${lore}` : '',
         recent_chat: su.planUseChat ? recentChatBlock(su.chatCount, 500) : '',
+        cast: castNames().join(', '),
         length: su.length,
         chapter_count: count,
     }) + '\n' + fillTemplate(PLAN_FORMAT, { length: su.length });
@@ -687,6 +717,9 @@ async function generateStages(arc) {
         suggested: Number.isFinite(Number(ch.chats)) && Number(ch.chats) > 0 ? Math.round(Number(ch.chats)) : null,
         chats: null,
         seed_en: String(ch.seed_en ?? ''),
+        mood_en: String(ch.mood_en ?? ''),
+        lead: String(ch.lead ?? ''),
+        mood_ko: String(ch.mood_ko ?? ''),
     }));
 }
 
@@ -794,6 +827,7 @@ async function judgeStage(arc) {
         done: data.done === true || data.done === 'true',
         regress: canRegress && (data.regress === true || data.regress === 'true'),
         reason: String(data.reason_ko ?? ''),
+        detail: String(data.detail_ko ?? ''),
         inner: arc.setup.innerHint ? readInner(data) : null,
     };
 }
@@ -823,8 +857,8 @@ async function peekInner(arc) {
 
 // ---------- arc control ----------
 
-function pushLog(arc, ok, text) {
-    arc.log.unshift({ at: progress(arc), ok, text });
+function pushLog(arc, ok, text, detail = '') {
+    arc.log.unshift({ at: progress(arc), ok, text, ...(detail ? { detail } : {}) });
     arc.log = arc.log.slice(0, 30);
 }
 
@@ -899,12 +933,12 @@ async function maybeJudge(force = false) {
         if (res.inner) { arc.inner = { ...res.inner, at: progress(arc) }; innerShown = false; }
         const tooEarly = res.done && ripeness(arc) < judgeGate(arc);
         if (res.regress && !res.done) {
-            pushLog(arc, false, '뒤로 밀려났어요 — ' + res.reason);
+            pushLog(arc, false, '뒤로 밀려났어요 — ' + res.reason, res.detail);
             goBack(arc);
             arc.stageStarts[arc.current] = progress(arc);   // the earlier chapter has to be earned again
             toastr.warning(`깡통 마음이 닫혔어요… ${arc.current + 1}단계로 돌아갔어요`, 'Slow Plot');
         } else {
-            pushLog(arc, res.done && !tooEarly, (res.done ? (tooEarly ? '이뤄졌지만 아직 이르니 조금 더 머물게요 — ' : '완료! ') : '아직이에요 — ') + res.reason);
+            pushLog(arc, res.done && !tooEarly, (res.done ? (tooEarly ? '이뤄졌지만 아직 이르니 조금 더 머물게요 — ' : '완료! ') : '아직이에요 — ') + res.reason, res.detail);
             if (res.done && !tooEarly) advance(arc);
         }
         save();
@@ -1177,6 +1211,14 @@ function renderStage(arc, st, i) {
             <div class="sb-edit">
                 <label class="sb-sub sb-block">제목<input class="sb-input" data-edit="title_ko" value="${esc(st.title_ko)}"></label>
                 <label class="sb-sub sb-block">내용<textarea class="sb-input sb-textarea" data-edit="summary_ko">${esc(st.summary_ko)}</textarea></label>
+                <div class="sb-group">
+                    <label class="sb-sub sb-block" for="sb_lead_${i}">이 단계를 이끄는 인물 <span>(비우면 자유)</span></label>
+                    <input id="sb_lead_${i}" class="sb-input" data-edit="lead" placeholder="예: ${esc(castNames()[0] || '깡통')}" value="${esc(st.lead || '')}">
+                    <div class="sb-chips">${castNames().map(n => `<button type="button" class="sb-chip" data-act="pickLead" data-value="${esc(n)}">${esc(n)}</button>`).join('')}</div>
+                </div>
+                <label class="sb-sub sb-block">이 단계 분위기 <span>(비우면 전체 분위기만)</span>
+                    <input class="sb-input" data-edit="mood_ko" placeholder="예: 달달 → 불안" value="${esc(st.mood_ko || '')}">
+                </label>
                 <label class="sb-sub sb-block">이 단계 챗 수 <span>(비우면 자동 · 지금 계획 약 ${displayBudgets(arc)[i] ?? '?'}챗)</span>
                     <input class="sb-input sb-num" type="number" min="1" max="2000" data-edit="chats" placeholder="자동" value="${isFixed(st) ? esc(st.chats) : ''}">
                 </label>
@@ -1212,7 +1254,7 @@ function renderStage(arc, st, i) {
         <div class="sb-stage-text">
             <div class="sb-stage-title">${esc(st.title_ko || '(제목 없음)')}</div>
             <div class="sb-stage-sum">${isDone && !isCur ? '완료!' : esc(st.summary_ko)}</div>
-            ${budgets[i] != null ? `<div class="sb-stage-chats">${isFixed(st) ? '<i class="fa-solid fa-thumbtack"></i> ' : '약 '}${budgets[i]}챗</div>` : ''}
+            ${budgets[i] != null || st.mood_ko || st.lead ? `<div class="sb-stage-chats">${st.lead ? `<span class="sb-stage-mood sb-stage-lead"><i class="fa-solid fa-user"></i> ${esc(st.lead)}</span>` : ''}${st.mood_ko ? `<span class="sb-stage-mood">${esc(st.mood_ko)}</span>` : ''}${budgets[i] != null ? `${isFixed(st) ? '<i class="fa-solid fa-thumbtack"></i> ' : '약 '}${budgets[i]}챗` : ''}</div>` : ''}
         </div>
         <div class="sb-stage-btns">
             <button type="button" class="sb-icon" data-act="edit" data-value="${i}" aria-label="${i + 1}단계 수정"><i class="fa-solid fa-pen"></i></button>
@@ -1249,7 +1291,10 @@ function renderProgress(arc) {
             status = `${arc.current + 1}단계 ${phaseLabel(r)} · ${judgeText}`;
             const extras = [];
             if (isBreather(arc, p + 1)) extras.push('다음 답변은 숨 고르기');
-            else if (arc.eventPending) extras.push('🎲 다음 답변에 돌발 사건');
+            else {
+                if (arc.eventPending) extras.push('🎲 다음 답변에 돌발 사건');
+                if (arc.nudgePending) extras.push('👉 다음 답변에 살짝 밀기');
+            }
             if (extras.length) status += `<br>${extras.join(' · ')}`;
         }
     }
@@ -1272,9 +1317,12 @@ function renderProgress(arc) {
             </button>
             <button type="button" class="sb-btn" data-act="judgeNow" ${judging || arc.status !== 'running' || arc.hold ? 'disabled' : ''}>지금 판정하기</button>
         </div>
-        <div class="sb-ctrl one">
+        <div class="sb-ctrl two">
+            <button type="button" class="sb-btn${arc.nudgePending ? ' sb-holding' : ''}" data-act="nudge" ${arc.status !== 'running' || arc.hold ? 'disabled' : ''}>
+                <i class="fa-solid fa-hand-point-right"></i> ${arc.nudgePending ? '밀기 대기 중' : '한 번만 살짝 밀기'}
+            </button>
             <button type="button" class="sb-btn${arc.eventPending ? ' sb-holding' : ''}" data-act="rollEvent" ${arc.status !== 'running' ? 'disabled' : ''}>
-                <i class="fa-solid fa-dice"></i> ${arc.eventPending ? '돌발 사건 대기 중 (누르면 취소)' : '돌발 사건 굴리기'}
+                <i class="fa-solid fa-dice"></i> ${arc.eventPending ? '돌발 대기 중' : '돌발 사건 굴리기'}
             </button>
         </div>
         <div class="sb-ctrl one">
@@ -1325,12 +1373,20 @@ function renderInner(arc) {
     </div>`;
 }
 
+let openLog = -1;
+
 function renderLog(arc) {
     if (!arc.log.length) return '';
     return `
     <div class="sb-card">
         <p class="sb-label">판정 기록</p>
-        ${arc.log.slice(0, 8).map(l => `<div class="sb-log ${l.ok ? 'ok' : ''}">${l.at}챗 · ${esc(l.text)}</div>`).join('')}
+        ${arc.log.slice(0, 8).map((l, i) => l.detail
+            ? `<button type="button" class="sb-log sb-log-btn ${l.ok ? 'ok' : ''}" data-act="logToggle" data-value="${i}" aria-expanded="${openLog === i}">
+                <span>${l.at}챗 · ${esc(l.text)}</span>
+                <span class="sb-log-more">${openLog === i ? '접기 ▴' : '자세히 ▾'}</span>
+                ${openLog === i ? `<span class="sb-log-detail">${esc(l.detail)}</span>` : ''}
+              </button>`
+            : `<div class="sb-log ${l.ok ? 'ok' : ''}">${l.at}챗 · ${esc(l.text)}</div>`).join('')}
     </div>`;
 }
 
@@ -1349,6 +1405,10 @@ function renderAdvanced() {
                 ${listProfiles().map(p => `<option value="${esc(p.id)}" ${s.profileId === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
             </select>
             <span class="sb-block">저렴한 모델의 연결 프로필을 고르면 판정 비용을 아낄 수 있어요. 채팅 연결은 그대로예요.</span>
+        </label>
+        <label class="sb-switch-row">
+            <input type="checkbox" data-setting="miniBar" ${s.miniBar ? 'checked' : ''}>
+            <span>채팅창 위에 작은 진행 표시 보기</span>
         </label>
         <label class="sb-sub sb-block">판정 주기 (봇 답변 몇 개마다)
             <input class="sb-input sb-num" type="number" min="2" max="100" data-setting="judgeInterval" value="${s.judgeInterval}">
@@ -1417,7 +1477,71 @@ function importPrompts(text) {
     return next;
 }
 
+// ---------- mini bar above the chat input ----------
+
+let miniOpen = false;
+
+function renderMiniBar() {
+    let bar = document.getElementById('sb_minibar');
+    const s = getSettings();
+    const arc = hasChat() ? getArc() : null;
+    const show = s.enabled && s.miniBar && arc && ['running', 'paused', 'done'].includes(arc.status) && arc.stages.length;
+    if (!show) { bar?.remove(); return; }
+    if (!bar) {
+        const host = document.getElementById('send_form');
+        if (!host?.parentElement) return;
+        bar = document.createElement('div');
+        bar.id = 'sb_minibar';
+        host.parentElement.insertBefore(bar, host);
+        bar.addEventListener('click', onMiniClick);
+    }
+    const st = arc.stages[arc.current];
+    const p = progress(arc);
+    let state = '';
+    if (arc.status === 'done') state = '완료';
+    else if (arc.status === 'paused') state = '일시정지';
+    else if (arc.hold) state = '머무는 중';
+    else if (isBreather(arc, p + 1)) state = '다음은 숨 고르기';
+    const flags = [arc.eventPending ? '🎲' : '', arc.nudgePending ? '👉' : ''].join('');
+    const running = arc.status === 'running';
+    bar.innerHTML = `
+        <button type="button" class="sb-mini-main" data-mini="toggle" aria-expanded="${miniOpen}">
+            ${SNAIL_SVG.replace('sb-snail', 'sb-mini-icon')}
+            <span class="sb-mini-stage">${arc.current + 1}/${arc.stages.length} ${esc(st?.title_ko || '')}</span>
+            <span class="sb-mini-meta">${flags} ${state ? esc(state) + ' · ' : ''}${p}/${arc.setup.length}챗</span>
+        </button>
+        ${miniOpen ? `<div class="sb-mini-actions">
+            <button type="button" data-mini="nudge" ${running && !arc.hold ? '' : 'disabled'}>${arc.nudgePending ? '밀기 취소' : '👉 살짝 밀기'}</button>
+            <button type="button" data-mini="event" ${running ? '' : 'disabled'}>${arc.eventPending ? '돌발 취소' : '🎲 돌발'}</button>
+            <button type="button" data-mini="pause" ${arc.status === 'done' ? 'disabled' : ''}>${arc.status === 'paused' ? '▶ 다시 시작' : 'Ⅱ 멈춤'}</button>
+            <button type="button" data-mini="hide" aria-label="진행 표시 숨기기">✕</button>
+        </div>` : ''}`;
+}
+
+function onMiniClick(e) {
+    const btn = e.target.closest('[data-mini]');
+    if (!btn || btn.disabled) return;
+    const arc = hasChat() ? getArc() : null;
+    if (!arc) return;
+    switch (btn.dataset.mini) {
+        case 'toggle': miniOpen = !miniOpen; break;
+        case 'nudge': arc.nudgePending = !arc.nudgePending; break;
+        case 'event': arc.eventPending = !arc.eventPending; break;
+        case 'pause': if (arc.status === 'paused') resumeArc(arc); else pauseArc(arc); break;
+        case 'hide':
+            getSettings().miniBar = false;
+            ctx().saveSettingsDebounced();
+            toastr.info('세부 설정에서 다시 켤 수 있어요', 'Slow Plot');
+            break;
+    }
+    save();
+    updateInjection();
+    renderMiniBar();
+    softRender();
+}
+
 function render() {
+    renderMiniBar();
     const body = document.getElementById('sb_body');
     if (!body) return;
     const s = getSettings();
@@ -1468,6 +1592,7 @@ async function onClick(e) {
     if (act === 'toggleSetup') { setupOpen = !setupOpen; render(); return; }
     if (act === 'wiToggle') { wiOpen = !wiOpen; render(); return; }
     if (act === 'ideaToggle') { ideaOpen = !ideaOpen; render(); return; }
+    if (act === 'logToggle') { openLog = openLog === Number(val) ? -1 : Number(val); render(); return; }
     if (act === 'ideaMoreToggle') { ideaMoreOpen = !ideaMoreOpen; render(); return; }
     if (act === 'advToggle') { advOpen = !advOpen; render(); return; }
     if (act === 'promptReset' || act === 'promptExport' || act === 'promptImport') {
@@ -1499,6 +1624,15 @@ async function onClick(e) {
         case 'foreshadow': su.foreshadow = !su.foreshadow; break;
         case 'breather': su.breather = !su.breather; break;
         case 'autoEvent': su.autoEvent = !su.autoEvent; break;
+        case 'pickLead': {
+            const input = btn.closest('.sb-edit')?.querySelector('[data-edit="lead"]');
+            if (input) input.value = val;
+            return;
+        }
+        case 'nudge':
+            arc.nudgePending = !arc.nudgePending;
+            if (arc.nudgePending) toastr.info('👉 다음 답변에서 한 걸음 밀어줄게요', 'Slow Plot');
+            break;
         case 'rollEvent':
             arc.eventPending = !arc.eventPending;
             if (arc.eventPending) toastr.info('🎲 다음 답변에 돌발 사건이 생겨요!', 'Slow Plot');
@@ -1673,6 +1807,9 @@ async function onClick(e) {
             const st = arc.stages[editing];
             st.seed_en = get('seed_en');
             const next = { title_ko: get('title_ko'), summary_ko: get('summary_ko'), title_en: get('title_en'), guide_en: get('guide_en') };
+            st.lead = get('lead');
+            const moodKo = get('mood_ko');
+            if (moodKo !== (st.mood_ko || '')) { st.mood_ko = moodKo; st.mood_en = ''; }
             const chatsVal = Math.round(Number(get('chats')));
             st.chats = get('chats') && chatsVal > 0 ? chatsVal : null;
             if (!next.title_ko && !next.summary_ko) { toastr.warning('제목이나 내용을 써주세요', 'Slow Plot'); return; }
@@ -1745,6 +1882,7 @@ function onInput(e) {
     if (el.dataset.setting) {
         const s = getSettings();
         const k = el.dataset.setting;
+        if (k === 'miniBar') { s.miniBar = el.checked; ctx().saveSettingsDebounced(); renderMiniBar(); return; }
         if (k === 'role' || k === 'profileId') s[k] = el.value;
         else if (k === 'minRatio') s.minRatio = Math.min(100, Math.max(0, Number(el.value) || 0)) / 100;
         else s[k] = Math.max(0, Number(el.value) || 0);
@@ -1799,12 +1937,14 @@ function afterBotReply() {
     let changed = false;
     // A breather reply skips the event, so it stays queued for the next one.
     if (arc.eventPending && !isBreather(arc, progress(arc))) { arc.eventPending = false; changed = true; }
+    if (arc.nudgePending && !isBreather(arc, progress(arc))) { arc.nudgePending = false; changed = true; }
     if (arc.setup.autoEvent && !arc.hold && Math.random() < AUTO_EVENT_CHANCE) { arc.eventPending = true; changed = true; }
     if (changed) save();
 }
 
 // Re-render from background events without wiping what the user is typing.
 function softRender() {
+    renderMiniBar();
     if (editing >= 0) return;
     if (document.activeElement?.closest?.('#sb_root .sb-input')) return;
     render();

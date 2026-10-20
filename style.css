@@ -374,3 +374,37 @@
 }
 #sb_root .sb-idea-x:hover { background: var(--sb-bg); color: #C0325E; }
 #sb_root .sb-idea-x:focus-visible { outline: 2px solid var(--sb-purple); }
+
+/* per-stage mood tag */
+#sb_root .sb-stage-mood { background: #fff; border-radius: 8px; padding: 1px 6px; margin-right: 6px; color: #8A4A60; font-size: 11px; }
+
+/* judge details */
+#sb_root .sb-log-btn { all: unset; cursor: pointer; display: flex; flex-direction: column; gap: 4px; box-sizing: border-box; width: 100%;
+    padding: 7px 10px; border-radius: 13px; background: #F7F4FF; font-size: 12px; color: #5B4E7A; }
+#sb_root .sb-log-btn.ok { background: var(--sb-mint-soft); }
+#sb_root .sb-log-btn:focus-visible { outline: 2px solid var(--sb-purple); }
+#sb_root .sb-log-more { font-size: 11px; color: var(--sb-purple); }
+#sb_root .sb-log-detail { background: #fff; border-radius: 10px; padding: 8px 10px; line-height: 1.5; word-break: keep-all; overflow-wrap: anywhere; }
+
+/* settings checkbox row */
+#sb_root .sb-switch-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--sb-ink); cursor: pointer; }
+#sb_root .sb-switch-row input { width: 18px; height: 18px; accent-color: var(--sb-pink); margin: 0; }
+
+/* mini bar above the chat input (outside #sb_root, so fully self-styled) */
+#sb_minibar {
+    margin: 0 6px 4px; border-radius: 14px; background: rgba(243, 238, 255, .96);
+    box-shadow: 0 2px 0 #E3DBF7; font-family: 'Jua', 'Noto Sans KR', sans-serif; color: #3F2F6B; overflow: hidden;
+}
+#sb_minibar button { all: unset; cursor: pointer; box-sizing: border-box; }
+#sb_minibar .sb-mini-main { display: flex; align-items: center; gap: 6px; width: 100%; padding: 4px 10px; min-height: 30px; font-size: 12.5px; }
+#sb_minibar .sb-mini-icon { width: 18px; height: 18px; flex: none; }
+#sb_minibar .sb-mini-stage { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#sb_minibar .sb-mini-meta { flex: none; font-size: 11.5px; color: #6E6390; }
+#sb_minibar .sb-mini-actions { display: flex; gap: 6px; padding: 0 8px 6px; flex-wrap: wrap; }
+#sb_minibar .sb-mini-actions button {
+    flex: 1 1 auto; text-align: center; min-height: 30px; padding: 4px 8px; border-radius: 10px;
+    background: #fff; box-shadow: 0 2px 0 #E3DBF7; font-size: 12px; color: #5B4E7A;
+}
+#sb_minibar .sb-mini-actions button:disabled { opacity: .4; cursor: default; }
+#sb_minibar button:focus-visible { outline: 2px solid #7C5CFF; }
+#sb_root .sb-stage-lead { color: var(--sb-purple-dark); }
