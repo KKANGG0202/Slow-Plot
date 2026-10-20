@@ -148,11 +148,46 @@ function stageStart(arc) {
     return arc.stageStarts[arc.current] ?? 0;
 }
 
+// A stage's share: a number the user fixed, else the AI's suggested weight, else an even share.
+function stageWeight(st, fallback) {
+    const w = Number(st.suggested);
+    return Number.isFinite(w) && w > 0 ? w : fallback;
+}
+
+function isFixed(st) {
+    return Number.isFinite(Number(st.chats)) && Number(st.chats) > 0;
+}
+
+// Planned chats for stages[from..]: fixed ones keep their number, the rest share what is left by weight.
+function planBudgets(arc, from, chatsLeft) {
+    const rest = arc.stages.slice(from);
+    const fixedSum = rest.filter(isFixed).reduce((n, st) => n + Number(st.chats), 0);
+    const auto = rest.filter(st => !isFixed(st));
+    const known = auto.map(st => Number(st.suggested)).filter(w => Number.isFinite(w) && w > 0);
+    const avg = known.length ? known.reduce((a, b) => a + b, 0) / known.length : 1;
+    const weightSum = auto.reduce((n, st) => n + stageWeight(st, avg), 0) || 1;
+    const pool = Math.max(0, chatsLeft - fixedSum);
+    return rest.map(st => isFixed(st)
+        ? Number(st.chats)
+        : Math.max(4, Math.round(pool * stageWeight(st, avg) / weightSum)));
+}
+
 function stageBudget(arc) {
-    const n = arc.stages.length;
-    const remainingStages = Math.max(1, n - arc.current);
-    const remainingChats = Math.max(0, Number(arc.setup.length) - stageStart(arc));
-    return Math.max(6, Math.round(remainingChats / remainingStages));
+    const chatsLeft = Math.max(0, Number(arc.setup.length) - stageStart(arc));
+    return Math.max(4, planBudgets(arc, arc.current, chatsLeft)[0] || 4);
+}
+
+// Budget shown on each stage row: done stages show what they took, the rest the current plan.
+function displayBudgets(arc) {
+    const started = arc.status !== 'draft' && arc.status !== 'setup';
+    if (!started) return planBudgets(arc, 0, Number(arc.setup.length));
+    const out = arc.stages.map(() => null);
+    const nextFrom = arc.status === 'done' ? arc.stages.length : arc.current;
+    if (nextFrom < arc.stages.length) {
+        const plan = planBudgets(arc, nextFrom, Math.max(0, Number(arc.setup.length) - stageStart(arc)));
+        plan.forEach((b, k) => { out[nextFrom + k] = b; });
+    }
+    return out;
 }
 
 function ripeness(arc) {
@@ -303,9 +338,10 @@ const SPICE_TEXT = {
 // Output formats stay fixed so edited prompts can never break parsing.
 const PLAN_FORMAT = [
     '',
+    'Also give each chapter "chats": how many of the roughly {{length}} messages it should take. Brief interludes (a short visit, a single incident) get few; major turns and their aftermath get more. All chapters together should add up to about {{length}}.',
     'Return JSON only, in exactly this shape:',
     '{"arc":{"premise":"<the overall story in 1-2 English sentences>","ending":"<the destination in English, or empty>","tone":"<tone in English, one short phrase>","notes":"<things to keep, in English, or empty>","obstacles":"<the obstacle characters or situations in one English sentence, or empty>"},',
-    ' "chapters":[{"title_ko":"<short Korean title>","summary_ko":"<one or two Korean sentences>","title_en":"<short English title>","guide_en":"<2-3 English sentences on what unfolds in this chapter and how it feels>"}]}',
+    ' "chapters":[{"title_ko":"<short Korean title>","summary_ko":"<one or two Korean sentences>","title_en":"<short English title>","guide_en":"<2-3 English sentences on what unfolds in this chapter and how it feels>","chats":<integer>}]}',
 ].join('\n');
 const IDEAS_FORMAT = [
     '',
@@ -559,7 +595,7 @@ async function generateStages(arc) {
         recent_chat: su.planUseChat ? recentChatBlock(su.chatCount, 500) : '',
         length: su.length,
         chapter_count: count,
-    }) + '\n' + PLAN_FORMAT;
+    }) + '\n' + fillTemplate(PLAN_FORMAT, { length: su.length });
 
     const raw = await askLLM('You are a story planner for long-form collaborative roleplay. Output only valid JSON.', prompt, 2500);
     const data = parseJson(raw);
@@ -577,6 +613,8 @@ async function generateStages(arc) {
         summary_ko: String(ch.summary_ko ?? ''),
         title_en: String(ch.title_en ?? ''),
         guide_en: String(ch.guide_en ?? ''),
+        suggested: Number.isFinite(Number(ch.chats)) && Number(ch.chats) > 0 ? Math.round(Number(ch.chats)) : null,
+        chats: null,
     }));
 }
 
@@ -877,7 +915,7 @@ function renderSetup(arc) {
             <p class="sb-label">몇 단계로?</p>
             <div class="sb-chips">${stageChips}</div>
             ${s.stageCustom ? `<label class="sb-sub sb-block">단계 수 (2~15)<input class="sb-input sb-num" type="number" min="2" max="15" data-bind="stageCount" value="${esc(s.stageCount === 'auto' ? 10 : s.stageCount)}"></label>` : ''}
-            ${s.stageCount !== 'auto' ? `<p class="sb-sub">단계당 약 ${Math.round(Number(s.length) / Number(s.stageCount))}챗씩 배정돼요</p>` : ''}
+            ${s.stageCount !== 'auto' ? `<p class="sb-sub">평균 단계당 약 ${Math.round(Number(s.length) / Number(s.stageCount))}챗. 내용에 따라 AI가 길고 짧게 나눠줘요</p>` : ''}
         </div>
         ${renderRefs(arc)}
         <button type="button" class="sb-btn sb-primary" data-act="generate" ${busy ? 'disabled' : ''}>
@@ -1009,6 +1047,9 @@ function renderStage(arc, st, i) {
             <div class="sb-edit">
                 <label class="sb-sub sb-block">제목<input class="sb-input" data-edit="title_ko" value="${esc(st.title_ko)}"></label>
                 <label class="sb-sub sb-block">내용<textarea class="sb-input sb-textarea" data-edit="summary_ko">${esc(st.summary_ko)}</textarea></label>
+                <label class="sb-sub sb-block">이 단계 챗 수 <span>(비우면 자동 · 지금 계획 약 ${displayBudgets(arc)[i] ?? '?'}챗)</span>
+                    <input class="sb-input sb-num" type="number" min="1" max="2000" data-edit="chats" placeholder="자동" value="${isFixed(st) ? esc(st.chats) : ''}">
+                </label>
                 <details class="sb-en">
                     <summary>AI가 실제로 읽는 문장 (영어)</summary>
                     <label class="sb-sub sb-block">Title<input class="sb-input" data-edit="title_en" value="${esc(st.title_en)}"></label>
@@ -1027,6 +1068,7 @@ function renderStage(arc, st, i) {
         </div>`;
     }
     const minIdx = firstMovable(arc);
+    const budgets = displayBudgets(arc);
     const canUp = i - 1 >= minIdx && i >= minIdx;
     const canDown = i >= minIdx && i + 1 < arc.stages.length;
     return `
@@ -1039,6 +1081,7 @@ function renderStage(arc, st, i) {
         <div class="sb-stage-text">
             <div class="sb-stage-title">${esc(st.title_ko || '(제목 없음)')}</div>
             <div class="sb-stage-sum">${isDone && !isCur ? '완료!' : esc(st.summary_ko)}</div>
+            ${budgets[i] != null ? `<div class="sb-stage-chats">${isFixed(st) ? '<i class="fa-solid fa-thumbtack"></i> ' : '약 '}${budgets[i]}챗</div>` : ''}
         </div>
         <div class="sb-stage-btns">
             <button type="button" class="sb-icon" data-act="edit" data-value="${i}" aria-label="${i + 1}단계 수정"><i class="fa-solid fa-pen"></i></button>
@@ -1428,7 +1471,7 @@ async function onClick(e) {
         case 'edit': editing = Number(val); break;
         case 'cancelEdit': editing = -1; break;
         case 'addStage':
-            arc.stages.push({ title_ko: '', summary_ko: '', title_en: '', guide_en: '' });
+            arc.stages.push({ title_ko: '', summary_ko: '', title_en: '', guide_en: '', suggested: null, chats: null });
             editing = arc.stages.length - 1;
             break;
         case 'delStage':
@@ -1460,6 +1503,8 @@ async function onClick(e) {
             const get = k => box.querySelector(`[data-edit="${k}"]`).value.trim();
             const st = arc.stages[editing];
             const next = { title_ko: get('title_ko'), summary_ko: get('summary_ko'), title_en: get('title_en'), guide_en: get('guide_en') };
+            const chatsVal = Math.round(Number(get('chats')));
+            st.chats = get('chats') && chatsVal > 0 ? chatsVal : null;
             if (!next.title_ko && !next.summary_ko) { toastr.warning('제목이나 내용을 써주세요', 'Slow Plot'); return; }
             const koChanged = next.title_ko !== st.title_ko || next.summary_ko !== st.summary_ko;
             const enChanged = next.title_en !== st.title_en || next.guide_en !== st.guide_en;
