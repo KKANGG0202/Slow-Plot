@@ -351,3 +351,17 @@
 #sb_root .sb-ideamore { background: #fff; border-radius: 14px; padding: 2px 10px; }
 #sb_root .sb-ideamore .sb-ideabody { padding: 6px 0 10px; }
 #sb_root .sb-idea .sb-row { gap: 6px; }
+
+/* placeholders read as hints, not text; inputs stay visible inside white boxes */
+#sb_root .sb-input::placeholder { color: #A99FC9; opacity: 1; font-style: normal; }
+#sb_root .sb-ideamore .sb-input,
+#sb_root .sb-ideabox .sb-ideamore .sb-input { background: var(--sb-bg); box-shadow: inset 0 0 0 1.5px var(--sb-line); }
+
+/* keep the panel font on spans and labels (some themes override them) */
+#sb_root .sb-wrap span:not([class*="fa-"]),
+#sb_root .sb-wrap label,
+#sb_root .sb-wrap p,
+#sb_root .sb-wrap button,
+#sb_root .sb-wrap input,
+#sb_root .sb-wrap textarea,
+#sb_root .sb-wrap select { font-family: 'Jua', 'Noto Sans KR', sans-serif; }
