@@ -21,6 +21,7 @@ const defaultSettings = Object.freeze({
 });
 
 const PRESETS = {
+    tropes: ['계약 관계', '정략결혼', '기억상실', '신분 차이', '회귀', '재회', '시한부', '오해', '비밀 정체', '삼각관계', '복수', '동거', '구원', '라이벌'],
     mood: ['피폐', '애틋', '달달', '긴장감', '미스터리', '일상', '코믹', '성장', '구원', '집착'],
     length: [30, 50, 100, 200, 400, 800],
     stages: ['auto', 3, 4, 5, 6, 7, 8],
@@ -54,6 +55,10 @@ function newArc() {
             ideaKeywords: '',
             ideaSpice: 'mid',  // calm | mid | wild
             ideaUseChat: true,
+            ideaTropes: [],
+            ideaEnding: 'any',  // any | happy | sad | open | twist
+            ideaAvoid: '',
+            ideaFocus: 'both',  // both | char | user | ensemble
             planUseChat: true,
             chatCount: 30,     // how many recent messages planning/ideas read
             difficulty: 'normal', // easy | normal | hard | hell
@@ -341,6 +346,11 @@ const DEFAULT_PROMPTS = Object.freeze({
         'Tone the user wants: {{tone}}',
         'Keywords to weave in: {{keywords}}',
         'Boldness: {{spice}}',
+        'Tropes the user wants woven in (they may be in Korean): {{tropes}}',
+        'Ending direction: {{ending_dir}}',
+        'Whose story it centers on: {{focus}}',
+        'Must avoid (the user\'s words, possibly in Korean): {{exclude}}',
+        '{{variation_of}}',
         '{{obstacles}}',
         'Already suggested (do not repeat or closely resemble these): {{avoid}}',
         '',
@@ -406,7 +416,7 @@ const PROMPT_INFO = {
     paceHold: { label: '페이스: 머물기 중', vars: 'char, user' },
     plan: { label: '과정 만들기', vars: 'char, user, char_description, persona, story, ending, tone, keep, difficulty, obstacles, world_info, recent_chat, length, chapter_count', fixed: true },
     judge: { label: '단계 판정', vars: 'char, user, chapter, next_chapter, recent_messages, difficulty_judge', fixed: true },
-    ideas: { label: '아이디어 추천', vars: 'char, user, char_description, persona, world_info, recent_chat, tone, keywords, spice, obstacles, avoid, count', fixed: true },
+    ideas: { label: '아이디어 추천', vars: 'char, user, char_description, persona, world_info, recent_chat, tone, keywords, spice, tropes, ending_dir, focus, exclude, variation_of, obstacles, avoid, count', fixed: true },
     diffEasy: { label: '난이도: 순한맛 태도', vars: 'char, user' },
     diffHard: { label: '난이도: 매운맛 태도', vars: 'char, user' },
     diffHell: { label: '난이도: 지옥맛 태도', vars: 'char, user' },
@@ -696,7 +706,21 @@ async function translateStage(arc, st) {
     st.guide_en = String(data.guide_en ?? st.summary_ko);
 }
 
-async function suggestIdeas(arc, count, avoid = []) {
+const IDEA_ENDINGS = {
+    any: ['상관없음', ''],
+    happy: ['해피', 'a happy ending'],
+    sad: ['새드', 'a sad or bittersweet ending'],
+    open: ['열린 결말', 'an open ending that leaves room to continue'],
+    twist: ['반전', 'an ending with a twist the reader will not see coming'],
+};
+const IDEA_FOCUS = {
+    both: ['둘 다', ''],
+    char: ['깡통 중심', 'mostly {{char}}: their inner life, past and choices drive it'],
+    user: ['깡캐 중심', 'mostly {{user}}: their situation and choices drive it'],
+    ensemble: ['주변 인물까지', 'an ensemble: side characters and their own stakes matter too'],
+};
+
+async function suggestIdeas(arc, count, avoid = [], variationOf = null) {
     const c = ctx();
     const su = arc.setup;
     const charDesc = su.useChar ? clip(c.substituteParams('{{description}}\n{{personality}}'), 2000) : '';
@@ -718,6 +742,11 @@ async function suggestIdeas(arc, count, avoid = []) {
         spice: SPICE_TEXT[su.ideaSpice] || SPICE_TEXT.mid,
         obstacles: obstacleText(arc, { char: c.name2, user: c.name1 }),
         avoid: avoid.map(i => `${i.title}: ${i.story}`).join(' / '),
+        tropes: su.ideaTropes.join(', '),
+        ending_dir: (IDEA_ENDINGS[su.ideaEnding] || IDEA_ENDINGS.any)[1],
+        focus: fillTemplate((IDEA_FOCUS[su.ideaFocus] || IDEA_FOCUS.both)[1], { char: c.name2, user: c.name1 }),
+        exclude: su.ideaAvoid.trim(),
+        variation_of: variationOf ? `Make every idea a variation on this one: keep its core premise and feel, but vary the turning points, stakes and ending so each is clearly its own take: ${variationOf.title}: ${variationOf.story} (ending: ${variationOf.ending})` : '',
         count,
     }) + '\n' + IDEAS_FORMAT;
     const data = parseJson(await askLLM('You are a creative story consultant for long-form roleplay. Output only valid JSON.', prompt, 2400));
@@ -1010,6 +1039,7 @@ function renderIdeas(arc) {
             ${idea.moods.length ? `<div class="sb-idea-tags">${idea.moods.map(m => `<span>${esc(m)}</span>`).join('')}</div>` : ''}
             <div class="sb-row">
                 <button type="button" class="sb-btn sb-small" data-act="ideaReroll" data-value="${i}" ${busy ? 'disabled' : ''}>${busy === `reroll${i}` ? '<i class="fa-solid fa-spinner fa-spin"></i>' : '<i class="fa-solid fa-rotate"></i> 다시'}</button>
+                <button type="button" class="sb-btn sb-small" data-act="ideaMore" data-value="${i}" ${busy ? 'disabled' : ''}>${busy === `more${i}` ? '<i class="fa-solid fa-spinner fa-spin"></i>' : '<i class="fa-solid fa-wand-magic-sparkles"></i> 비슷하게 더'}</button>
                 <span class="sb-grow"></span>
                 <button type="button" class="sb-btn sb-small sb-primary" data-act="ideaUse" data-value="${i}">이걸로</button>
             </div>
@@ -1031,10 +1061,36 @@ function renderIdeas(arc) {
                 <div class="sb-chips">${chip('최근 대화 반영', s.ideaUseChat, 'ideaUseChat', '1')}</div>
                 <p class="sb-sub sb-hint">분위기 칩과 아래 "참고할 자료"도 같이 반영돼요</p>
             </div>
+            ${renderIdeaMore(arc)}
             <button type="button" class="sb-btn sb-idea-go" data-act="ideaGo" ${busy ? 'disabled' : ''}>
                 ${loading ? '<i class="fa-solid fa-spinner fa-spin"></i> 고민하는 중…' : `<i class="fa-solid fa-dice"></i> ${arc.ideas?.length ? '다른 아이디어 3개' : '아이디어 3개 받기'}`}
             </button>
             ${cards ? `<div class="sb-ideas">${cards}</div>` : ''}
+        </div>` : ''}
+    </div>`;
+}
+
+let ideaMoreOpen = false;
+
+function renderIdeaMore(arc) {
+    const s = arc.setup;
+    const picked = s.ideaTropes.length + (s.ideaEnding !== 'any') + (s.ideaFocus !== 'both') + (s.ideaAvoid.trim() ? 1 : 0);
+    const tropeChips = PRESETS.tropes.map(v => chip(v, s.ideaTropes.includes(v), 'ideaTrope', v)).join('');
+    const endChips = Object.entries(IDEA_ENDINGS).map(([k, [l]]) => chip(l, s.ideaEnding === k, 'ideaEnding', k)).join('');
+    const focusChips = Object.entries(IDEA_FOCUS).map(([k, [l]]) => chip(l, s.ideaFocus === k, 'ideaFocus', k)).join('');
+    return `
+    <div class="sb-ideamore">
+        <button type="button" class="sb-fold-head" data-act="ideaMoreToggle" aria-expanded="${ideaMoreOpen}"><i class="fa-solid ${ideaMoreOpen ? 'fa-caret-down' : 'fa-caret-right'}"></i> 더 자세히 고르기 <span class="sb-sub">${picked ? `(${picked}개 고름)` : '(클리셰 · 결말 · 시점 · 빼줘)'}</span></button>
+        ${ideaMoreOpen ? `
+        <div class="sb-ideabody">
+            <div class="sb-group"><p class="sb-sub">넣고 싶은 클리셰 <span>(여러 개 OK)</span></p><div class="sb-chips">${tropeChips}</div></div>
+            <div class="sb-group"><p class="sb-sub">결말 방향</p><div class="sb-chips">${endChips}</div></div>
+            <div class="sb-group"><p class="sb-sub">누구 이야기?</p><div class="sb-chips">${focusChips}</div></div>
+            <div class="sb-group">
+                <label class="sb-sub sb-block" for="sb_idea_avoid">빼줘 <span>(이런 건 안 나왔으면)</span></label>
+                <input id="sb_idea_avoid" class="sb-input" data-bind="ideaAvoid" placeholder="예: 누가 죽는 전개, 연애" value="${esc(s.ideaAvoid)}">
+            </div>
+            ${picked ? '<button type="button" class="sb-btn sb-small" data-act="ideaMoreReset">고른 것 전부 풀기</button>' : ''}
         </div>` : ''}
     </div>`;
 }
@@ -1408,6 +1464,7 @@ async function onClick(e) {
     if (act === 'toggleSetup') { setupOpen = !setupOpen; render(); return; }
     if (act === 'wiToggle') { wiOpen = !wiOpen; render(); return; }
     if (act === 'ideaToggle') { ideaOpen = !ideaOpen; render(); return; }
+    if (act === 'ideaMoreToggle') { ideaMoreOpen = !ideaMoreOpen; render(); return; }
     if (act === 'advToggle') { advOpen = !advOpen; render(); return; }
     if (act === 'promptReset' || act === 'promptExport' || act === 'promptImport') {
         await onPromptAction(act);
@@ -1455,6 +1512,25 @@ async function onClick(e) {
             break;
         }
         case 'ideaUseChat': su.ideaUseChat = !su.ideaUseChat; break;
+        case 'ideaTrope': su.ideaTropes = su.ideaTropes.includes(val) ? su.ideaTropes.filter(t => t !== val) : [...su.ideaTropes, val]; break;
+        case 'ideaEnding': su.ideaEnding = val; break;
+        case 'ideaFocus': su.ideaFocus = val; break;
+        case 'ideaMoreReset': Object.assign(su, { ideaTropes: [], ideaEnding: 'any', ideaFocus: 'both', ideaAvoid: '' }); break;
+        case 'ideaMore': {
+            const i = Number(val);
+            const base = arc.ideas?.[i];
+            if (!base) return;
+            busy = `more${i}`; render();
+            try {
+                const more = await suggestIdeas(arc, 2, arc.ideas, base);
+                arc.ideas = [base, ...more];
+                toastr.info('맨 위 카드를 바탕으로 비슷한 버전 2개를 뽑았어요', 'Slow Plot');
+            } catch (err) {
+                console.error(LOG, err);
+                toastr.error('추천 실패: ' + err.message, 'Slow Plot');
+            } finally { busy = ''; }
+            break;
+        }
         case 'ideaGo': {
             busy = 'ideas'; render();
             try {
