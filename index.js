@@ -54,6 +54,8 @@ function newArc() {
             ideaKeywords: '',
             ideaSpice: 'mid',  // calm | mid | wild
             ideaUseChat: true,
+            planUseChat: true,
+            chatCount: 30,     // how many recent messages planning/ideas read
             difficulty: 'normal', // easy | normal | hard | hell
             obstacles: false,
             obstacleText: '',
@@ -231,6 +233,8 @@ const DEFAULT_PROMPTS = Object.freeze({
         '{{obstacles}}',
         '{{world_info}}',
         '',
+        '{{recent_chat}}',
+        '',
         'Total length: about {{length}} chat messages.',
         'Number of chapters: {{chapter_count}}',
         '',
@@ -238,7 +242,7 @@ const DEFAULT_PROMPTS = Object.freeze({
         '- Follow the user\'s outline faithfully, including dark or painful developments if that is what they asked for. This is fiction the user chose for their own story.',
         '- Each chapter is a phase of the story (situation, turning point, and its emotional aftermath), not a single scripted scene. It must be able to unfold gradually over many messages while leaving room for unrelated scenes and the user\'s own choices.',
         '- Build up to major events: show foreshadowing and setup before a turning point, and give its aftermath room to breathe. No abrupt jumps.',
-        '- Respect the characters\' established personalities and the current situation of the roleplay.',
+        '- Respect the characters\' established personalities and the current situation of the roleplay. If recent conversation is given, start chapter 1 from exactly where the story is now and build on the people, events and unresolved threads already in it.',
         '- The user\'s inputs above may be written in Korean; understand them as given.',
     ].join('\n'),
     judge: [
@@ -324,7 +328,7 @@ const PROMPT_INFO = {
     paceLate: { label: '페이스: 무르익는 중', vars: 'char, user' },
     paceOver: { label: '페이스: 충분히 익었을 때', vars: 'char, user' },
     paceHold: { label: '페이스: 머물기 중', vars: 'char, user' },
-    plan: { label: '과정 만들기', vars: 'char, user, char_description, persona, story, ending, tone, keep, difficulty, obstacles, world_info, length, chapter_count', fixed: true },
+    plan: { label: '과정 만들기', vars: 'char, user, char_description, persona, story, ending, tone, keep, difficulty, obstacles, world_info, recent_chat, length, chapter_count', fixed: true },
     judge: { label: '단계 판정', vars: 'char, user, chapter, next_chapter, recent_messages, difficulty_judge', fixed: true },
     ideas: { label: '아이디어 추천', vars: 'char, user, char_description, persona, world_info, recent_chat, tone, keywords, spice, obstacles, avoid, count', fixed: true },
     diffEasy: { label: '난이도: 순한맛 태도', vars: 'char, user' },
@@ -522,6 +526,12 @@ function moodList(arc) {
     return moods;
 }
 
+function recentChatBlock(count, maxEach) {
+    const recent = ctx().chat.filter(m => !m.is_system).slice(-count);
+    if (!recent.length) return '';
+    return 'Recent conversation (the story so far, most recent last):\n' + recent.map(m => `${m.name}: ${clip(m.mes, maxEach)}`).join('\n');
+}
+
 async function generateStages(arc) {
     const c = ctx();
     const moods = moodList(arc);
@@ -546,6 +556,7 @@ async function generateStages(arc) {
         difficulty: difficultyText(arc, { char: c.name2, user: c.name1 }),
         obstacles: obstacleText(arc, { char: c.name2, user: c.name1 }),
         world_info: lore ? `World info (background facts; do not contradict them):\n${lore}` : '',
+        recent_chat: su.planUseChat ? recentChatBlock(su.chatCount, 500) : '',
         length: su.length,
         chapter_count: count,
     }) + '\n' + PLAN_FORMAT;
@@ -593,7 +604,7 @@ async function suggestIdeas(arc, count, avoid = []) {
     await Promise.all(Object.keys(su.wi).map(ensureBook));
     const lore = selectedWiText(arc);
     const recent = su.ideaUseChat
-        ? c.chat.filter(m => !m.is_system).slice(-12).map(m => `${m.name}: ${clip(m.mes, 400)}`).join('\n')
+        ? c.chat.filter(m => !m.is_system).slice(-Number(su.chatCount || 30)).map(m => `${m.name}: ${clip(m.mes, 400)}`).join('\n')
         : '';
     const prompt = fillTemplate(getPrompt('ideas'), {
         char: c.name2,
@@ -955,7 +966,11 @@ function renderRefs(arc) {
         <div class="sb-chips">
             ${chip(`${c.name2} 캐릭터 설정`, s.useChar, 'useChar', '1')}
             ${chip(`${c.name1} 페르소나`, s.usePersona, 'usePersona', '1')}
+            ${chip('최근 대화 반영', s.planUseChat, 'planUseChat', '1')}
         </div>
+        ${s.planUseChat || s.ideaUseChat ? `<label class="sb-sub sb-block sb-chatcount">최근 몇 챗까지 읽을까요? <span>(1~100, 아이디어 추천에도 같이 써요)</span>
+            <input class="sb-input sb-num" type="number" min="1" max="100" data-bind="chatCount" value="${esc(s.chatCount)}">
+        </label>` : ''}
         <div class="sb-wi">
             <button type="button" class="sb-fold-head" data-act="wiToggle" aria-expanded="${wiOpen}"><i class="fa-solid ${wiOpen ? 'fa-caret-down' : 'fa-caret-right'}"></i> 월드인포 고르기 <span class="sb-sub sb-wi-count">(${wiCount(arc)}개 선택됨)</span></button>
             ${!wiOpen ? '' : books.length ? `
@@ -1272,6 +1287,7 @@ async function onClick(e) {
             break;
         case 'useChar': su.useChar = !su.useChar; break;
         case 'usePersona': su.usePersona = !su.usePersona; break;
+        case 'planUseChat': su.planUseChat = !su.planUseChat; break;
         case 'ideaSpice': su.ideaSpice = val; break;
         case 'difficulty': su.difficulty = val; break;
         case 'obstacles': su.obstacles = !su.obstacles; break;
@@ -1445,6 +1461,7 @@ function onInput(e) {
     if (el.dataset.bind && arc) {
         const k = el.dataset.bind;
         if (k === 'length') arc.setup.length = Math.max(20, Number(el.value) || 400);
+        else if (k === 'chatCount') arc.setup.chatCount = Math.min(100, Math.max(1, Math.round(Number(el.value) || 30)));
         else if (k === 'stageCount') arc.setup.stageCount = Math.min(15, Math.max(2, Math.round(Number(el.value) || 5)));
         else arc.setup[k] = el.value;
         save();
