@@ -343,6 +343,7 @@ const DEFAULT_PROMPTS = Object.freeze({
     ideas: [
         'Suggest {{count}} different long-term story ideas for an ongoing roleplay. Each idea is a storyline that can slowly unfold over a few hundred messages.',
         '',
+        'Cast in this chat: {{cast}}',
         'Characters:',
         '- {{char}}: {{char_description}}',
         '- {{user}}: {{persona}}',
@@ -362,7 +363,7 @@ const DEFAULT_PROMPTS = Object.freeze({
         'Already suggested (do not repeat or closely resemble these): {{avoid}}',
         '',
         'Guidelines:',
-        '- Each idea must fit these specific characters, their situation and their world. Avoid generic plots that could apply to anyone.',
+        '- Each idea must fit these specific characters, their situation and their world. Avoid generic plots that could apply to anyone. With several characters in the cast, give the ideas different focal characters and let side members matter.',
         '- Make the ideas clearly different from each other in premise and direction.',
         '- Give each idea a clear direction and an ending to head toward, while leaving room for the user\'s own choices along the way.',
     ].join('\n'),
@@ -424,7 +425,7 @@ const PROMPT_INFO = {
     paceHold: { label: '페이스: 머물기 중', vars: 'char, user' },
     plan: { label: '과정 만들기', vars: 'char, user, cast, char_description, persona, story, ending, tone, keep, difficulty, obstacles, world_info, recent_chat, length, chapter_count', fixed: true },
     judge: { label: '단계 판정', vars: 'char, user, chapter, next_chapter, recent_messages, difficulty_judge', fixed: true },
-    ideas: { label: '아이디어 추천', vars: 'char, user, char_description, persona, world_info, recent_chat, tone, keywords, spice, tropes, ending_dir, focus, exclude, variation_of, obstacles, avoid, count', fixed: true },
+    ideas: { label: '아이디어 추천', vars: 'char, user, cast, char_description, persona, world_info, recent_chat, tone, keywords, spice, tropes, ending_dir, focus, exclude, variation_of, obstacles, avoid, count', fixed: true },
     diffEasy: { label: '난이도: 순한맛 태도', vars: 'char, user' },
     diffHard: { label: '난이도: 매운맛 태도', vars: 'char, user' },
     diffHell: { label: '난이도: 지옥맛 태도', vars: 'char, user' },
@@ -779,6 +780,7 @@ async function suggestIdeas(arc, count, avoid = [], variationOf = null) {
         obstacles: obstacleText(arc, { char: c.name2, user: c.name1 }),
         avoid: avoid.map(i => `${i.title}: ${i.story}`).join(' / '),
         tropes: su.ideaTropes.join(', '),
+        cast: castNames().join(', '),
         ending_dir: (IDEA_ENDINGS[su.ideaEnding] || IDEA_ENDINGS.any)[1],
         focus: fillTemplate((IDEA_FOCUS[su.ideaFocus] || IDEA_FOCUS.both)[1], { char: c.name2, user: c.name1 }),
         exclude: su.ideaAvoid.trim(),
@@ -1162,7 +1164,7 @@ function renderRefs(arc) {
     return `
     <div class="sb-field">
         <p class="sb-label">등장인물 <span class="sb-sub">(다인봇이면 이름을 쉼표로 써주세요)</span></p>
-        <input class="sb-input" data-bind="castExtra" placeholder="예: 하루, 유키, 렌 (갠봇이면 비워도 돼요)" value="${esc(s.castExtra)}">
+        <input class="sb-input" data-bind="castExtra" placeholder="예: 하루, 유키, 렌 (1인봇이면 비워도 돼요)" value="${esc(s.castExtra)}">
         ${wiCount(arc) ? '<button type="button" class="sb-btn sb-small sb-cast-wi" data-act="castFromWi"><i class="fa-solid fa-book"></i> 체크한 월드인포 항목 이름 불러오기</button>' : ''}
         <p class="sb-sub">과정 만들 때 이 사람들한테 골고루 이야기를 나눠주고, 단계별 "이끄는 인물" 칩으로도 떠요</p>
     </div>
