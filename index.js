@@ -935,6 +935,7 @@ function goBack(arc) {
 let judging = false;
 
 async function maybeJudge(force = false) {
+    const manual = force;
     const s = getSettings();
     const arc = hasChat() ? getArc() : null;
     if (!s.enabled || !arc || arc.status !== 'running' || arc.hold || judging) return;
@@ -960,6 +961,7 @@ async function maybeJudge(force = false) {
         } else {
             pushLog(arc, res.done && !tooEarly, (res.done ? (tooEarly ? '이뤄졌지만 아직 이르니 조금 더 머물게요 — ' : '완료! ') : '아직이에요 — ') + res.reason, res.detail);
             if (res.done && !tooEarly) advance(arc);
+            else if (manual) toastr.info(`판정 결과: ${res.done ? '이뤄졌지만 아직 이르대요' : '아직이래요'} — ${res.reason}`, 'Slow Plot');
         }
         save();
     } catch (err) {
@@ -1336,7 +1338,7 @@ function renderProgress(arc) {
             <button type="button" class="sb-btn${arc.hold ? ' sb-holding' : ''}" data-act="hold" ${arc.status !== 'running' ? 'disabled' : ''}>
                 <i class="fa-solid ${arc.hold ? 'fa-lock-open' : 'fa-thumbtack'}"></i> ${arc.hold ? '머물기 끝내기' : '이 단계에 머물기'}
             </button>
-            <button type="button" class="sb-btn" data-act="judgeNow" ${judging || arc.status !== 'running' || arc.hold ? 'disabled' : ''}>지금 판정하기</button>
+            <button type="button" class="sb-btn" data-act="judgeNow" ${judging || arc.status !== 'running' || arc.hold ? 'disabled' : ''}>${judging ? '<i class="fa-solid fa-spinner fa-spin"></i> 판정하는 중…' : '지금 판정하기'}</button>
         </div>
         <div class="sb-ctrl two">
             <button type="button" class="sb-btn${arc.nudgePending ? ' sb-holding' : ''}" data-act="nudge" ${arc.status !== 'running' || arc.hold ? 'disabled' : ''}>
@@ -1548,7 +1550,7 @@ function renderQuick() {
                 <button type="button" data-quick="nudge" class="${arc.nudgePending ? 'on' : ''}" ${running && !arc.hold ? '' : 'disabled'}>👉 ${arc.nudgePending ? '밀기 취소' : '살짝 밀기'}</button>
                 <button type="button" data-quick="event" class="${arc.eventPending ? 'on' : ''}" ${running ? '' : 'disabled'}>🎲 ${arc.eventPending ? '돌발 취소' : '돌발 사건'}</button>
                 <button type="button" data-quick="hold" class="${arc.hold ? 'on' : ''}" ${running ? '' : 'disabled'}>📌 ${arc.hold ? '머물기 끝' : '머물기'}</button>
-                <button type="button" data-quick="judge" ${running && !arc.hold && !judging ? '' : 'disabled'}>🔍 지금 판정</button>
+                <button type="button" data-quick="judge" ${running && !arc.hold && !judging ? '' : 'disabled'}>${judging ? '⏳ 판정하는 중…' : '🔍 지금 판정'}</button>
                 <button type="button" data-quick="pause" ${arc.status === 'done' ? 'disabled' : ''}>${arc.status === 'paused' ? '▶ 다시 시작' : 'Ⅱ 일시정지'}</button>
                 <button type="button" data-quick="next" ${arc.status === 'done' ? 'disabled' : ''}>⏭ 다음 단계</button>
             </div>`;
@@ -1579,7 +1581,12 @@ function onQuickClick(e) {
         case 'hold': toggleHold(arc); break;
         case 'pause': if (arc.status === 'paused') resumeArc(arc); else pauseArc(arc); break;
         case 'next': advance(arc, true); break;
-        case 'judge': save(); maybeJudge(true); renderQuick(); return;
+        case 'judge':
+            save();
+            toastr.info('판정 시작! 모델에 따라 1분쯤 걸릴 수 있어요', 'Slow Plot');
+            maybeJudge(true);
+            renderQuick();
+            return;
     }
     save();
     updateInjection();
@@ -1814,7 +1821,11 @@ async function onClick(e) {
         case 'next': advance(arc, true); break;
         case 'prev': goBack(arc); break;
         case 'hold': toggleHold(arc); break;
-        case 'judgeNow': save(); maybeJudge(true); return;
+        case 'judgeNow':
+            save();
+            toastr.info('판정 시작! 모델에 따라 1분쯤 걸릴 수 있어요', 'Slow Plot');
+            maybeJudge(true);
+            return;
         case 'preview': {
             const text = arc.status === 'running' ? buildInjection(arc) : '(지금은 아무것도 보내지 않아요. 진행 중일 때만 보내요)';
             await c.Popup.show.text('AI한테 가는 문장', `<pre class="sb-pre">${esc(text)}</pre>`);
