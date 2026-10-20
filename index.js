@@ -251,6 +251,12 @@ function effRipeness(arc) {
     return ripeness(arc) * diff(arc).pace;
 }
 
+// Short stages get checked more often: never wait longer than about a quarter of the stage.
+function judgeInterval(arc) {
+    const setting = Math.max(1, Number(getSettings().judgeInterval) || 5);
+    return Math.max(1, Math.min(setting, Math.round(stageBudget(arc) / 4) || 1));
+}
+
 // Share of the stage budget that must pass before judging starts.
 function judgeGate(arc) {
     const d = diff(arc);
@@ -941,7 +947,7 @@ async function maybeJudge(force = false) {
     if (!s.enabled || !arc || arc.status !== 'running' || arc.hold || judging) return;
     const p = progress(arc);
     if (!force) {
-        if (p - arc.lastJudge < Number(s.judgeInterval)) return;
+        if (p - arc.lastJudge < judgeInterval(arc)) return;
         if (ripeness(arc) < judgeGate(arc)) return;
     }
     const chatId = ctx().getCurrentChatId();
@@ -1309,7 +1315,7 @@ function renderProgress(arc) {
     if (arc.status === 'draft') status = '마음에 안 드는 단계는 고친 다음 <b>시작</b>을 눌러요';
     else if (arc.status === 'done') status = '모든 단계 완료! 이야기가 끝까지 왔어요';
     else {
-        const toJudge = Math.max(0, Number(s.judgeInterval) - (p - arc.lastJudge));
+        const toJudge = Math.max(0, judgeInterval(arc) - (p - arc.lastJudge));
         const minLeft = Math.max(0, Math.ceil(stageBudget(arc) * judgeGate(arc) - (p - stageStart(arc))));
         const judgeText = judging ? '지금 판정하는 중… (모델에 따라 1분쯤 걸려요)' : (minLeft > 0 ? `${minLeft}챗 뒤부터 판정 시작` : `다음 판정까지 ${toJudge}챗`);
         if (arc.status === 'paused') {
