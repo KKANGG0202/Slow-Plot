@@ -336,3 +336,11 @@
     #sb_root .sb-card { padding: 12px 9px; }
     #sb_root .sb-heart { width: 28px; height: 26px; }
 }
+
+/* stage rows on phones: stack the small buttons so the text gets the width */
+@media (max-width: 520px) {
+    #sb_root .sb-stage-btns { flex-direction: column; gap: 4px; }
+    #sb_root .sb-icon { width: 30px; height: 30px; border-radius: 10px; font-size: 12px; }
+    #sb_root .sb-stage { padding: 8px; gap: 7px; }
+    #sb_root .sb-num-badge { width: 24px; height: 24px; font-size: 12px; }
+}
