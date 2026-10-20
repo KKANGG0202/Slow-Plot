@@ -984,6 +984,19 @@ function renderRefs(arc) {
     </div>`;
 }
 
+// Finished stages and the one in progress stay put; only upcoming ones move.
+function firstMovable(arc) {
+    return arc.status === 'draft' || arc.status === 'setup' ? 0 : arc.current + 1;
+}
+
+function moveStage(arc, from, dir) {
+    const to = from + dir;
+    const min = firstMovable(arc);
+    if (from < min || to < min || to >= arc.stages.length) return false;
+    [arc.stages[from], arc.stages[to]] = [arc.stages[to], arc.stages[from]];
+    return true;
+}
+
 function renderStage(arc, st, i) {
     const running = arc.status !== 'draft';
     const isCur = running && i === arc.current && arc.status !== 'done';
@@ -1013,8 +1026,15 @@ function renderStage(arc, st, i) {
             </div>
         </div>`;
     }
+    const minIdx = firstMovable(arc);
+    const canUp = i - 1 >= minIdx && i >= minIdx;
+    const canDown = i >= minIdx && i + 1 < arc.stages.length;
     return `
     <div class="sb-stage ${cls}">
+        ${arc.stages.length > 1 && arc.status !== 'done' ? `<div class="sb-move">
+            <button type="button" class="sb-move-btn" data-act="moveAt" data-value="${i}:-1" aria-label="${i + 1}단계 위로" ${canUp ? '' : 'disabled'}><i class="fa-solid fa-chevron-up"></i></button>
+            <button type="button" class="sb-move-btn" data-act="moveAt" data-value="${i}:1" aria-label="${i + 1}단계 아래로" ${canDown ? '' : 'disabled'}><i class="fa-solid fa-chevron-down"></i></button>
+        </div>` : ''}
         <span class="sb-num-badge">${isDone ? '<i class="fa-solid fa-check"></i>' : i + 1}</span>
         <div class="sb-stage-text">
             <div class="sb-stage-title">${esc(st.title_ko || '(제목 없음)')}</div>
@@ -1423,10 +1443,16 @@ async function onClick(e) {
             break;
         }
         case 'move': {
-            const to = editing + Number(val);
-            if (to < 0 || to >= arc.stages.length) return;
-            [arc.stages[editing], arc.stages[to]] = [arc.stages[to], arc.stages[editing]];
-            editing = to;
+            if (!moveStage(arc, editing, Number(val))) {
+                toastr.info('이미 지나갔거나 진행 중인 단계는 순서를 바꿀 수 없어요', 'Slow Plot');
+                return;
+            }
+            editing += Number(val);
+            break;
+        }
+        case 'moveAt': {
+            const [from, dir] = String(val).split(':').map(Number);
+            if (!moveStage(arc, from, dir)) return;
             break;
         }
         case 'saveEdit': {

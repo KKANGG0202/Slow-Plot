@@ -278,3 +278,61 @@
 #sb_root .sb-ideabox { padding: 4px 12px; }
 #sb_root .sb-ideabody { padding-bottom: 12px; }
 #sb_root .sb-adv { gap: 12px; }
+
+/* stage reorder arrows */
+#sb_root .sb-move { display: flex; flex-direction: column; gap: 2px; flex: none; }
+#sb_root .sb-move-btn {
+    all: unset; cursor: pointer; width: 26px; height: 18px; border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; color: var(--sb-purple); background: rgba(255, 255, 255, .7);
+}
+#sb_root .sb-move-btn:disabled { opacity: .25; cursor: default; }
+#sb_root .sb-move-btn:focus-visible { outline: 2px solid var(--sb-purple); }
+
+/* ===== compact sizing: everything about 15% smaller ===== */
+#sb_root .sb-wrap { gap: 12px; padding: 12px 10px 14px; border-radius: 20px; }
+#sb_root .sb-brand { font-size: 18px; gap: 8px; }
+#sb_root .sb-logo { width: 32px; height: 32px; border-radius: 11px; }
+#sb_root .sb-logo .sb-snail { width: 24px; height: 24px; }
+#sb_root .sb-switch { font-size: 12px; }
+#sb_root .sb-track { width: 44px; height: 26px; }
+#sb_root .sb-knob { width: 18px; height: 18px; left: 4px; top: 3px; }
+#sb_root .sb-switch input:checked + .sb-track .sb-knob { left: 22px; }
+#sb_root #sb_body { gap: 12px; }
+#sb_root .sb-card { padding: 13px 11px; border-radius: 20px; gap: 12px; box-shadow: 0 5px 0 var(--sb-line); }
+#sb_root .sb-card-head { font-size: 15px; min-height: 28px; }
+#sb_root .sb-label { font-size: 14px; margin-bottom: 6px; }
+#sb_root .sb-sub { font-size: 12px; }
+#sb_root .sb-chips { gap: 6px; }
+#sb_root .sb-chip { font-size: 12.5px; min-height: 32px; padding: 4px 11px; border-radius: 16px; }
+#sb_root .sb-input { font-size: 13.5px; min-height: 36px; padding: 8px 10px; border-radius: 13px; }
+#sb_root .sb-textarea { min-height: 56px; }
+#sb_root .sb-plot { min-height: 90px; }
+#sb_root .sb-btn { font-size: 13px; min-height: 38px; padding: 5px 10px; border-radius: 15px; }
+#sb_root .sb-primary { font-size: 15.5px; min-height: 44px; box-shadow: 0 4px 0 var(--sb-purple-dark); }
+#sb_root .sb-small { font-size: 12.5px; min-height: 34px; }
+#sb_root .sb-small.sb-primary { font-size: 12.5px; min-height: 34px; }
+#sb_root .sb-idea-go { font-size: 13.5px; }
+#sb_root .sb-icon { width: 34px; height: 34px; border-radius: 11px; font-size: 13px; }
+#sb_root .sb-stage-btns { gap: 4px; }
+#sb_root .sb-stage { padding: 8px 10px; gap: 8px; border-radius: 16px; }
+#sb_root .sb-num-badge { width: 26px; height: 26px; border-radius: 10px; font-size: 12.5px; }
+#sb_root .sb-stage-title { font-size: 13.5px; }
+#sb_root .sb-stage-sum { font-size: 12px; }
+#sb_root .sb-heart { width: 32px; height: 30px; }
+#sb_root .sb-status { font-size: 12px; }
+#sb_root .sb-log { font-size: 12px; padding: 7px 10px; border-radius: 13px; }
+#sb_root .sb-fold-head { font-size: 13px; min-height: 30px; }
+#sb_root .sb-idea { padding: 10px; border-radius: 15px; }
+#sb_root .sb-idea-title { font-size: 14px; }
+#sb_root .sb-idea-story { font-size: 13px; }
+#sb_root .sb-inner-text { font-size: 13px; padding: 10px; }
+#sb_root .sb-wi-item { min-height: 34px; }
+#sb_root .sb-wi-name { font-size: 13px; }
+#sb_root .sb-ideabody { gap: 13px; }
+
+@media (max-width: 420px) {
+    #sb_root .sb-wrap { padding: 10px 7px 12px; }
+    #sb_root .sb-card { padding: 12px 9px; }
+    #sb_root .sb-heart { width: 28px; height: 26px; }
+}
