@@ -1506,11 +1506,24 @@ function addWandButton() {
     item.tabIndex = 0;
     item.setAttribute('role', 'button');
     item.innerHTML = `${SNAIL_SVG.replace('sb-snail', 'sb-wand-icon')}<span>Slow Plot</span>`;
-    const open = () => { quickOpen = true; quickInnerShown = false; renderQuick(); };
-    item.addEventListener('click', open);
-    item.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
     menu.appendChild(item);
 }
+
+function openQuick() {
+    quickOpen = true;
+    quickInnerShown = false;
+    // Wait a tick so the wand menu finishes closing before the panel appears.
+    setTimeout(renderQuick, 0);
+}
+
+// Delegated + capture phase: keeps working even if the wand menu is rebuilt
+// or another handler stops the click from bubbling.
+document.addEventListener('click', e => {
+    if (e.target?.closest?.('#sb_wand_btn')) openQuick();
+}, true);
+document.addEventListener('keydown', e => {
+    if ((e.key === 'Enter' || e.key === ' ') && e.target?.closest?.('#sb_wand_btn')) { e.preventDefault(); openQuick(); }
+}, true);
 
 function renderQuick() {
     let box = document.getElementById('sb_quick');
