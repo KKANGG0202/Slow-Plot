@@ -60,6 +60,10 @@ function newArc() {
             obstacles: false,
             obstacleText: '',
             innerHint: false,
+            foreshadow: false,
+            breather: false,
+            breatherEvery: 5,
+            autoEvent: false,
             useChar: true,
             usePersona: true,
             wi: {},           // { bookName: [uid, ...] } entries sent when planning
@@ -74,7 +78,8 @@ function newArc() {
         lastJudge: 0,
         hold: false,          // stay mode: keep injecting the current chapter but never advance
         frozenAt: null,
-        countMode: 'bot',     // progress counts bot replies only       // message count when paused/held; those chats are not counted
+        countMode: 'bot',     // progress counts bot replies only
+        eventPending: false,  // a surprise event goes into the next reply       // message count when paused/held; those chats are not counted
         ideas: [],            // last story suggestions: { title, story, ending, moods[] }
         inner: null,          // { text, warmth, at } — char's hidden feelings, for the hint box
         log: [],
@@ -268,6 +273,8 @@ const DEFAULT_PROMPTS = Object.freeze({
         'How {{char}} behaves: {{difficulty}}',
         'Current chapter ({{chapter_num}}/{{chapter_total}}): {{chapter}}',
         'Pacing: {{pacing}}',
+        '{{foreshadow}}',
+        '{{event}}',
         'Rules:',
         '- The scene in progress and {{user}}\'s actions always come first. Follow them fully; never steer away from what {{user}} is doing.',
         '- Use this direction only where it fits naturally. It is completely fine for a reply not to touch it at all.',
@@ -348,6 +355,9 @@ const DEFAULT_PROMPTS = Object.freeze({
     judgeHard: '{{char}} is meant to be hard to win over. Only count the chapter as done if {{user}}\'s own actions have clearly worn down {{char}}\'s resistance.',
     judgeHell: '{{char}} is meant to be extremely hard to win over. Only count the chapter as done if {{user}} has clearly earned it through their own actions, and notice if things have slipped backwards.',
     obstacles: 'Include obstacles: bring in {{obstacle_detail}} and weave them into the chapters so they get in the way of the story\'s direction and raise the stakes.',
+    foreshadow: 'Foreshadowing: if it fits naturally, let this small detail surface in passing, without explaining it or drawing attention to it: {{seed}}',
+    breather: 'This reply is a breather. Do not push the story\'s direction at all; let the moment be ordinary and unhurried, following whatever {{user}} is doing.',
+    event: 'For this reply only: let one small unexpected event happen that fits the current scene and chapter (an interruption, a discovery, a visitor, a mishap, a sudden change of plans or weather). Keep it proportionate, do not resolve it, and leave room for {{user}} to react.',
     inner: [
         'Read the recent roleplay and describe what {{char}} is privately feeling right now about {{user}} and the situation: the thoughts {{char}} would never say out loud.',
         '',
@@ -370,7 +380,7 @@ const PLAN_FORMAT = [
     'Also give each chapter "chats": how many of the roughly {{length}} replies it should take. Brief interludes (a short visit, a single incident) get few; major turns and their aftermath get more. All chapters together should add up to about {{length}}.',
     'Return JSON only, in exactly this shape:',
     '{"arc":{"premise":"<the overall story in 1-2 English sentences>","ending":"<the destination in English, or empty>","tone":"<tone in English, one short phrase>","notes":"<things to keep, in English, or empty>","obstacles":"<the obstacle characters or situations in one English sentence, or empty>"},',
-    ' "chapters":[{"title_ko":"<short Korean title>","summary_ko":"<one or two Korean sentences>","title_en":"<short English title>","guide_en":"<2-3 English sentences on what unfolds in this chapter and how it feels>","chats":<integer>}]}',
+    ' "chapters":[{"title_ko":"<short Korean title>","summary_ko":"<one or two Korean sentences>","title_en":"<short English title>","guide_en":"<2-3 English sentences on what unfolds in this chapter and how it feels>","chats":<integer>,"seed_en":"<one small, concrete English detail to plant during this chapter that quietly foreshadows the next chapter without revealing it (an object, a habit, a passing remark); empty for the last chapter>"}]}',
 ].join('\n');
 const IDEAS_FORMAT = [
     '',
@@ -387,7 +397,7 @@ function judgeFormat(regress, inner) {
 }
 
 const PROMPT_INFO = {
-    inject: { label: '매 턴 들어가는 방향 문장', vars: 'char, user, story, ending, tone, notes, obstacles, difficulty, chapter, chapter_num, chapter_total, pacing' },
+    inject: { label: '매 턴 들어가는 방향 문장', vars: 'char, user, story, ending, tone, notes, obstacles, difficulty, chapter, chapter_num, chapter_total, pacing, foreshadow, event' },
     paceEarly: { label: '페이스: 막 시작됐을 때', vars: 'char, user' },
     paceMid: { label: '페이스: 스며드는 중', vars: 'char, user' },
     paceLate: { label: '페이스: 무르익는 중', vars: 'char, user' },
@@ -403,6 +413,9 @@ const PROMPT_INFO = {
     judgeHell: { label: '난이도: 지옥맛 판정 기준', vars: 'char, user' },
     obstacles: { label: '방해꾼 등장', vars: 'char, user, obstacle_detail' },
     inner: { label: '속마음 엿보기', vars: 'char, user, chapter, recent_messages', fixed: true },
+    foreshadow: { label: '복선 심기', vars: 'char, user, seed' },
+    breather: { label: '숨 고르기 턴', vars: 'char, user' },
+    event: { label: '돌발 사건', vars: 'char, user' },
 };
 
 function getPrompt(key) {
@@ -457,7 +470,16 @@ function buildInjection(arc) {
     if (!st) return '';
     const en = arc.arcEn ?? {};
     const base = { char: name2, user: name1 };
-    const pacing = arc.hold ? fillTemplate(getPrompt('paceHold'), base) : phaseInstruction(effRipeness(arc), base);
+    const su = arc.setup;
+    const nextReply = progress(arc) + 1;
+    const breather = !arc.hold && isBreather(arc, nextReply);
+    const pacing = breather
+        ? fillTemplate(getPrompt('breather'), base)
+        : arc.hold ? fillTemplate(getPrompt('paceHold'), base) : phaseInstruction(effRipeness(arc), base);
+    // Seeds surface every third reply so they stay occasional.
+    const seed = su.foreshadow && !breather && st.seed_en && nextReply % 3 === 0
+        ? fillTemplate(getPrompt('foreshadow'), { ...base, seed: st.seed_en }) : '';
+    const event = arc.eventPending && !breather ? fillTemplate(getPrompt('event'), base) : '';
     return fillTemplate(getPrompt('inject'), {
         ...base,
         story: en.premise || arc.setup.plot,
@@ -470,8 +492,17 @@ function buildInjection(arc) {
         chapter_num: arc.current + 1,
         chapter_total: arc.stages.length,
         pacing,
+        foreshadow: seed,
+        event,
     });
 }
+
+function isBreather(arc, replyNo) {
+    const every = Math.max(2, Number(arc.setup.breatherEvery) || 5);
+    return !!arc.setup.breather && replyNo % every === 0;
+}
+
+const AUTO_EVENT_CHANCE = 0.12;
 
 function updateInjection() {
     const { setExtensionPrompt } = ctx();
@@ -644,6 +675,7 @@ async function generateStages(arc) {
         guide_en: String(ch.guide_en ?? ''),
         suggested: Number.isFinite(Number(ch.chats)) && Number(ch.chats) > 0 ? Math.round(Number(ch.chats)) : null,
         chats: null,
+        seed_en: String(ch.seed_en ?? ''),
     }));
 }
 
@@ -928,12 +960,20 @@ function renderSetup(arc) {
             <div class="sb-chips">
                 ${chip('방해꾼 등장', s.obstacles, 'obstacles', '1')}
                 ${chip('속마음 힌트', s.innerHint, 'innerHint', '1')}
+                ${chip('복선 심기', s.foreshadow, 'foreshadow', '1')}
+                ${chip('숨 고르기 턴', s.breather, 'breather', '1')}
+                ${chip('돌발 사건 자동', s.autoEvent, 'autoEvent', '1')}
             </div>
             ${s.obstacles ? `<label class="sb-sub sb-block">어떤 방해꾼? <span>(안 써도 돼요. 비우면 AI가 어울리는 걸 넣어요)</span>
                 <input class="sb-input" data-bind="obstacleText" placeholder="예: 깡통 옛 약혼자가 돌아옴, 옆 동네 대형 베이커리 입점" value="${esc(s.obstacleText)}">
             </label>
             <p class="sb-sub">방해꾼은 과정을 새로 만들 때 줄거리에 들어가요</p>` : ''}
             ${s.innerHint ? '<p class="sb-sub">진행 중에 깡통 속마음 한 줄과 마음 온도를 보여줘요. 판정할 때 같이 갱신돼요</p>' : ''}
+            ${s.foreshadow ? '<p class="sb-sub">다음 단계와 이어질 작은 디테일을 가끔(3답변에 한 번) 슬쩍 흘려요. 과정을 새로 만들 때 단계마다 복선이 생겨요</p>' : ''}
+            ${s.breather ? `<label class="sb-sub sb-block">숨 고르기: 봇 답변 몇 개마다 한 번 쉴까요? <span>(2~20)</span>
+                <input class="sb-input sb-num" type="number" min="2" max="20" data-bind="breatherEvery" value="${esc(s.breatherEvery)}">
+            </label>` : ''}
+            ${s.autoEvent ? '<p class="sb-sub">가끔(약 8답변에 한 번) 작은 돌발 사건이 저절로 생겨요. 진행 패널의 🎲 버튼으로 직접 굴릴 수도 있어요</p>' : ''}
         </div>
         <div class="sb-field">
             <p class="sb-label">몇 챗 동안? <span class="sb-sub">(봇 답변 기준. 내 메시지는 안 세요)</span></p>
@@ -1083,6 +1123,7 @@ function renderStage(arc, st, i) {
                     <summary>AI가 실제로 읽는 문장 (영어)</summary>
                     <label class="sb-sub sb-block">Title<input class="sb-input" data-edit="title_en" value="${esc(st.title_en)}"></label>
                     <label class="sb-sub sb-block">Guide<textarea class="sb-input sb-textarea" data-edit="guide_en">${esc(st.guide_en)}</textarea></label>
+                    <label class="sb-sub sb-block">복선 (Foreshadowing seed)<textarea class="sb-input sb-textarea" data-edit="seed_en">${esc(st.seed_en || '')}</textarea></label>
                     <p class="sb-sub">한국어만 고치면 영어는 저장할 때 자동으로 다시 번역돼요. 영어를 직접 고치면 그대로 써요.</p>
                 </details>
                 <div class="sb-row">
@@ -1145,6 +1186,10 @@ function renderProgress(arc) {
             status = `<b>${arc.current + 1}단계에 머무는 중</b><br>분위기는 계속 깔아두고, 다음 단계로는 넘어가지 않아요`;
         } else {
             status = `${arc.current + 1}단계 ${phaseLabel(r)} · ${judgeText}`;
+            const extras = [];
+            if (isBreather(arc, p + 1)) extras.push('다음 답변은 숨 고르기');
+            else if (arc.eventPending) extras.push('🎲 다음 답변에 돌발 사건');
+            if (extras.length) status += `<br>${extras.join(' · ')}`;
         }
     }
 
@@ -1165,6 +1210,11 @@ function renderProgress(arc) {
                 <i class="fa-solid ${arc.hold ? 'fa-lock-open' : 'fa-thumbtack'}"></i> ${arc.hold ? '머물기 끝내기' : '이 단계에 머물기'}
             </button>
             <button type="button" class="sb-btn" data-act="judgeNow" ${judging || arc.status !== 'running' || arc.hold ? 'disabled' : ''}>지금 판정하기</button>
+        </div>
+        <div class="sb-ctrl one">
+            <button type="button" class="sb-btn${arc.eventPending ? ' sb-holding' : ''}" data-act="rollEvent" ${arc.status !== 'running' ? 'disabled' : ''}>
+                <i class="fa-solid fa-dice"></i> ${arc.eventPending ? '돌발 사건 대기 중 (누르면 취소)' : '돌발 사건 굴리기'}
+            </button>
         </div>
         <div class="sb-ctrl one">
             <button type="button" class="sb-btn" data-act="preview">AI한테 가는 문장 보기</button>
@@ -1384,6 +1434,13 @@ async function onClick(e) {
         case 'difficulty': su.difficulty = val; break;
         case 'obstacles': su.obstacles = !su.obstacles; break;
         case 'innerHint': su.innerHint = !su.innerHint; break;
+        case 'foreshadow': su.foreshadow = !su.foreshadow; break;
+        case 'breather': su.breather = !su.breather; break;
+        case 'autoEvent': su.autoEvent = !su.autoEvent; break;
+        case 'rollEvent':
+            arc.eventPending = !arc.eventPending;
+            if (arc.eventPending) toastr.info('🎲 다음 답변에 돌발 사건이 생겨요!', 'Slow Plot');
+            break;
         case 'innerReveal': innerShown = !innerShown; break;
         case 'innerPeek': {
             busy = 'inner'; render();
@@ -1531,6 +1588,7 @@ async function onClick(e) {
             const box = btn.closest('.sb-edit');
             const get = k => box.querySelector(`[data-edit="${k}"]`).value.trim();
             const st = arc.stages[editing];
+            st.seed_en = get('seed_en');
             const next = { title_ko: get('title_ko'), summary_ko: get('summary_ko'), title_en: get('title_en'), guide_en: get('guide_en') };
             const chatsVal = Math.round(Number(get('chats')));
             st.chats = get('chats') && chatsVal > 0 ? chatsVal : null;
@@ -1562,6 +1620,7 @@ function onInput(e) {
         const k = el.dataset.bind;
         if (k === 'length') arc.setup.length = Math.max(5, Number(el.value) || 100);
         else if (k === 'chatCount') arc.setup.chatCount = Math.min(100, Math.max(1, Math.round(Number(el.value) || 30)));
+        else if (k === 'breatherEvery') arc.setup.breatherEvery = Math.min(20, Math.max(2, Math.round(Number(el.value) || 5)));
         else if (k === 'stageCount') arc.setup.stageCount = Math.min(15, Math.max(2, Math.round(Number(el.value) || 5)));
         else arc.setup[k] = el.value;
         save();
@@ -1650,6 +1709,17 @@ const SNAIL_SVG = `<svg class="sb-snail" viewBox="0 0 64 64" xmlns="http://www.w
 
 // ---------- events ----------
 
+// A pending surprise is spent by the reply that just arrived; auto mode may queue the next one.
+function afterBotReply() {
+    const arc = hasChat() ? getArc() : null;
+    if (!arc || arc.status !== 'running') return;
+    let changed = false;
+    // A breather reply skips the event, so it stays queued for the next one.
+    if (arc.eventPending && !isBreather(arc, progress(arc))) { arc.eventPending = false; changed = true; }
+    if (arc.setup.autoEvent && !arc.hold && Math.random() < AUTO_EVENT_CHANCE) { arc.eventPending = true; changed = true; }
+    if (changed) save();
+}
+
 // Re-render from background events without wiping what the user is typing.
 function softRender() {
     if (editing >= 0) return;
@@ -1677,6 +1747,7 @@ function refresh() {
     eventSource.on(event_types.MESSAGE_SENT, () => { updateInjection(); softRender(); });
     eventSource.on(event_types.MESSAGE_DELETED, () => { updateInjection(); softRender(); });
     eventSource.on(event_types.MESSAGE_RECEIVED, () => {
+        afterBotReply();
         updateInjection();
         softRender();
         maybeJudge();
