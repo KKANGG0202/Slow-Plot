@@ -84,7 +84,8 @@ function newArc() {
         lastJudge: 0,
         hold: false,          // stay mode: keep injecting the current chapter but never advance
         frozenAt: null,       // bot-reply count when paused/held; replies meanwhile are not counted
-        countMode: 'bot',     // progress counts bot replies only
+        countMode: 'idx',     // progress = bot replies after chat index baseIndex
+        baseIndex: null,
         eventPending: false,  // a surprise event goes into the next reply
         nudgePending: false,  // one firmer push in the next reply
         ideas: [],            // last story suggestions: { title, story, ending, moods[] }
@@ -117,7 +118,17 @@ function save() {
 
 // Pacing counts only the bot's replies: user inputs vary too much in size to be a fair clock.
 function messageCount() {
-    return ctx().chat.filter(m => !m.is_system && !m.is_user).length;
+    return ctx().chat.filter(m => isBotReply(m)).length;
+}
+
+// Hidden messages (/hide, or summary extensions that hide old turns) are flagged is_system
+// but are still real replies; genuine system notes carry extra.type (narrator, comment, ...).
+function isRealSystem(m) {
+    return !!m?.is_system && !!m?.extra?.type;
+}
+
+function isBotReply(m) {
+    return !!m && !m.is_user && !isRealSystem(m) && m.name !== 'System';
 }
 
 // Bot replies among the first `n` non-system messages (converts counts saved by older versions).
@@ -132,18 +143,50 @@ function botsWithin(n) {
     return bots;
 }
 
+// Bot replies from chat index `from` to the end (hidden replies included).
+function botsSince(from) {
+    const chat = ctx().chat;
+    let n = 0;
+    for (let i = Math.max(0, from); i < chat.length; i++) if (isBotReply(chat[i])) n++;
+    return n;
+}
+
+// Raw clock for an arc: replies since it started (index based, so hiding old turns cannot shrink it).
+function absCount(arc) {
+    return arc.baseIndex != null ? botsSince(arc.baseIndex) : messageCount();
+}
+
+// Index where the last `n` bot replies begin (used to anchor older arcs).
+function indexBeforeLast(n) {
+    const chat = ctx().chat;
+    let count = 0;
+    for (let i = chat.length - 1; i >= 0; i--) {
+        if (isBotReply(chat[i])) count++;
+        if (count > n) return i + 1;
+    }
+    return 0;
+}
+
 function migrateCounting(arc) {
-    if (arc.countMode === 'bot') return;
-    if (arc.status !== 'setup' && arc.status !== 'draft') {
+    if (arc.countMode === 'idx') return;
+    const started = arc.status !== 'setup' && arc.status !== 'draft';
+    if (started && arc.countMode !== 'bot') {
+        // Oldest arcs counted user messages too: convert their stage marks to bot replies first.
         const oldBase = Number(arc.base) || 0;
         const toNew = p => Math.max(0, botsWithin(oldBase + p) - botsWithin(oldBase));
         arc.stageStarts = (arc.stageStarts || []).map(toNew);
         arc.lastJudge = toNew(Number(arc.lastJudge) || 0);
-        if (arc.frozenAt != null) arc.frozenAt = botsWithin(arc.frozenAt);
-        arc.base = botsWithin(oldBase);
         arc.setup.length = Math.max(5, Math.round(Number(arc.setup.length) / 2));
     }
-    arc.countMode = 'bot';
+    if (started) {
+        // Visible-only counting shrank when a summary extension hid old turns.
+        // Anchor to the chat so progress resumes from the current stage's start.
+        const target = Math.max(0, Number(arc.stageStarts?.[arc.current]) || 0, Number(arc.lastJudge) || 0);
+        arc.baseIndex = indexBeforeLast(target);
+        arc.base = 0;
+        if (arc.frozenAt != null) arc.frozenAt = target;
+    }
+    arc.countMode = 'idx';
 }
 
 function isFrozen(arc) {
@@ -151,16 +194,16 @@ function isFrozen(arc) {
 }
 
 function progress(arc) {
-    const now = arc.frozenAt != null ? arc.frozenAt : messageCount();
+    const now = arc.frozenAt != null ? arc.frozenAt : absCount(arc);
     return Math.max(0, now - arc.base);
 }
 
 // Pause and hold both freeze the pacing clock; chats written meanwhile are not counted.
 function syncFreeze(arc) {
     if (isFrozen(arc) && arc.frozenAt == null) {
-        arc.frozenAt = messageCount();
+        arc.frozenAt = absCount(arc);
     } else if (!isFrozen(arc) && arc.frozenAt != null) {
-        arc.base += Math.max(0, messageCount() - arc.frozenAt);
+        arc.base += Math.max(0, absCount(arc) - arc.frozenAt);
         arc.frozenAt = null;
     }
 }
@@ -1851,7 +1894,7 @@ async function onClick(e) {
         }
         case 'start':
             if (editing >= 0) { toastr.info('수정 중인 단계를 먼저 저장해 주세요', 'Slow Plot'); return; }
-            Object.assign(arc, { status: 'running', current: 0, base: messageCount(), stageStarts: [0], lastJudge: 0, hold: false, frozenAt: null, log: [] });
+            Object.assign(arc, { status: 'running', current: 0, baseIndex: ctx().chat.length, base: 0, countMode: 'idx', stageStarts: [0], lastJudge: 0, hold: false, frozenAt: null, log: [] });
             pushLog(arc, true, `1단계 「${arc.stages[0].title_ko}」 시작`);
             break;
         case 'pause': pauseArc(arc); break;
