@@ -4,7 +4,7 @@
     "dependencies": [],
     "js": "index.js",
     "css": "style.css",
-    "version": "0.6.9",
+    "version": "0.7.0",
     "homePage": "https://github.com/KKANGG0202/Slow-Plot",
     "auto_update": true,
     "minimum_client_version": "1.13.0"

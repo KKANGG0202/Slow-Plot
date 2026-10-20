@@ -1522,11 +1522,32 @@ function addWandButton() {
     menu.appendChild(item);
 }
 
+let quickPopup = null;
+let quickEl = null;
+
+// Shown through SillyTavern's own popup so it sits above everything on phones too.
 function openQuick() {
-    quickOpen = true;
-    quickInnerShown = false;
-    // Wait a tick so the wand menu finishes closing before the panel appears.
-    setTimeout(renderQuick, 0);
+    if (quickPopup) return;
+    // Wait a tick so the wand menu finishes closing first.
+    setTimeout(async () => {
+        const c = ctx();
+        quickEl = document.createElement('div');
+        quickEl.id = 'sb_quick';
+        quickEl.addEventListener('click', onQuickClick);
+        quickOpen = true;
+        quickInnerShown = false;
+        renderQuick();
+        quickPopup = new c.Popup(quickEl, c.POPUP_TYPE.TEXT, '', { okButton: '닫기' });
+        try {
+            await quickPopup.show();
+        } catch (err) {
+            console.error(LOG, 'quick panel failed', err);
+        } finally {
+            quickPopup = null;
+            quickOpen = false;
+            quickEl = null;
+        }
+    }, 0);
 }
 
 // Delegated + capture phase: keeps working even if the wand menu is rebuilt
@@ -1539,15 +1560,8 @@ document.addEventListener('keydown', e => {
 }, true);
 
 function renderQuick() {
-    let box = document.getElementById('sb_quick');
-    if (!quickOpen) { box?.remove(); return; }
-    if (!box) {
-        box = document.createElement('div');
-        box.id = 'sb_quick';
-        document.body.appendChild(box);
-        box.addEventListener('click', onQuickClick);
-        box.addEventListener('keydown', e => { if (e.key === 'Escape') { quickOpen = false; renderQuick(); } });
-    }
+    const box = quickEl;
+    if (!quickOpen || !box) return;
     const arc = hasChat() ? getArc() : null;
     const live = arc && ['running', 'paused', 'done'].includes(arc.status) && arc.stages.length;
     let body = '<p class="sbq-empty">진행 중인 과정이 없어요.<br>확장 메뉴의 Slow Plot에서 과정을 만들고 시작해 주세요.</p>';
@@ -1582,12 +1596,10 @@ function renderQuick() {
             </div>`;
     }
     box.innerHTML = `
-        <div class="sbq-backdrop" data-quick="close"></div>
-        <div class="sbq-card" role="dialog" aria-label="Slow Plot 빠른 조작">
+        <div class="sbq-card" aria-label="Slow Plot 빠른 조작">
             <div class="sbq-head">
                 ${SNAIL_SVG.replace('sb-snail', 'sbq-icon')}
                 <span class="sbq-title">Slow Plot</span>
-                <button type="button" class="sbq-x" data-quick="close" aria-label="닫기">✕</button>
             </div>
             ${body}
         </div>`;
@@ -1597,7 +1609,7 @@ function onQuickClick(e) {
     const btn = e.target.closest('[data-quick]');
     if (!btn || btn.disabled) return;
     const act = btn.dataset.quick;
-    if (act === 'close') { quickOpen = false; renderQuick(); return; }
+    if (act === 'close') { quickPopup?.completeCancelled?.(); return; }
     const arc = hasChat() ? getArc() : null;
     if (!arc) return;
     switch (act) {

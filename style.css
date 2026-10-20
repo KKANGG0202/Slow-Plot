@@ -403,12 +403,10 @@
 /* wand menu item */
 #sb_wand_btn .sb-wand-icon { width: 1.25em; height: 1.25em; flex: none; }
 
-/* quick panel (outside #sb_root, self-contained) */
-#sb_quick { position: fixed; inset: 0; z-index: 9999; display: flex; align-items: flex-end; justify-content: center; font-family: 'Jua', 'Noto Sans KR', sans-serif; }
-#sb_quick .sbq-backdrop { position: absolute; inset: 0; background: rgba(20, 16, 40, .35); }
+/* quick panel (inside SillyTavern's popup) */
+#sb_quick { font-family: 'Jua', 'Noto Sans KR', sans-serif; text-align: left; }
 #sb_quick .sbq-card {
-    position: relative; width: min(380px, calc(100vw - 20px)); margin-bottom: max(16px, env(safe-area-inset-bottom));
-    background: #F3EEFF; color: #3F2F6B; border-radius: 22px; padding: 12px 12px 14px; box-shadow: 0 6px 0 #E3DBF7, 0 10px 30px rgba(0,0,0,.25);
+    background: #F3EEFF; color: #3F2F6B; border-radius: 18px; padding: 12px;
     display: flex; flex-direction: column; gap: 8px; box-sizing: border-box;
 }
 #sb_quick button { all: unset; cursor: pointer; box-sizing: border-box; font-family: inherit; }
