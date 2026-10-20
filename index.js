@@ -378,14 +378,15 @@ const SPICE_TEXT = {
 const PLAN_FORMAT = [
     '',
     'Also give each chapter "chats": how many of the roughly {{length}} replies it should take. Brief interludes (a short visit, a single incident) get few; major turns and their aftermath get more. All chapters together should add up to about {{length}}.',
-    'Return JSON only, in exactly this shape:',
+    'Work in English: design every chapter fully in the English fields first. The Korean fields come last and are natural Korean renderings of what you already wrote in English, not new ideas.',
+    'Return JSON only, in exactly this shape and field order:',
     '{"arc":{"premise":"<the overall story in 1-2 English sentences>","ending":"<the destination in English, or empty>","tone":"<tone in English, one short phrase>","notes":"<things to keep, in English, or empty>","obstacles":"<the obstacle characters or situations in one English sentence, or empty>"},',
-    ' "chapters":[{"title_ko":"<short Korean title>","summary_ko":"<one or two Korean sentences>","title_en":"<short English title>","guide_en":"<2-3 English sentences on what unfolds in this chapter and how it feels>","chats":<integer>,"seed_en":"<one small, concrete English detail to plant during this chapter that quietly foreshadows the next chapter without revealing it (an object, a habit, a passing remark); empty for the last chapter>"}]}',
+    ' "chapters":[{"title_en":"<short English title>","guide_en":"<2-3 English sentences on what unfolds in this chapter and how it feels>","chats":<integer>,"seed_en":"<one small, concrete English detail to plant during this chapter that quietly foreshadows the next chapter without revealing it (an object, a habit, a passing remark); empty for the last chapter>","title_ko":"<the title in natural Korean>","summary_ko":"<the guide condensed into one or two natural Korean sentences>"}]}',
 ].join('\n');
 const IDEAS_FORMAT = [
     '',
-    'Write every title and text in Korean.',
-    `Return JSON only: {"ideas":[{"title":"<short Korean title>","story":"<2-3 Korean sentences describing the storyline>","ending":"<one short Korean sentence: where it ends up>","moods":["<1-3 short Korean mood tags, preferably from: ${PRESETS.mood.join(', ')}>"]}]}`,
+    'Work in English first: draft each idea in the English fields, then render it in natural Korean in the Korean fields.',
+    `Return JSON only, in this field order: {"ideas":[{"title_en":"<short English title>","story_en":"<2-3 English sentences describing the storyline>","ending_en":"<one short English sentence: where it ends up>","title":"<the title in natural Korean>","story":"<the storyline in natural Korean>","ending":"<the ending in natural Korean>","moods":["<1-3 short Korean mood tags, preferably from: ${PRESETS.mood.join(', ')}>"]}]}`,
 ].join('\n');
 const INNER_FIELDS = '"inner_ko": "<one short Korean line: {{char}}\'s private, unspoken feeling right now, in {{char}}\'s own inner voice>", "warmth": <integer 0-100: how open {{char}} currently is toward {{user}}>';
 
@@ -657,7 +658,7 @@ async function generateStages(arc) {
         chapter_count: count,
     }) + '\n' + fillTemplate(PLAN_FORMAT, { length: su.length });
 
-    const raw = await askLLM('You are a story planner for long-form collaborative roleplay. Output only valid JSON.', prompt, 2500);
+    const raw = await askLLM('You are a story planner for long-form collaborative roleplay. Output only valid JSON.', prompt, 4000);
     const data = parseJson(raw);
     const chapters = Array.isArray(data.chapters) ? data.chapters : [];
     if (!chapters.length) throw new Error('단계가 비어 있음');
@@ -719,7 +720,7 @@ async function suggestIdeas(arc, count, avoid = []) {
         avoid: avoid.map(i => `${i.title}: ${i.story}`).join(' / '),
         count,
     }) + '\n' + IDEAS_FORMAT;
-    const data = parseJson(await askLLM('You are a creative story consultant for long-form roleplay. Output only valid JSON.', prompt, 1500));
+    const data = parseJson(await askLLM('You are a creative story consultant for long-form roleplay. Output only valid JSON.', prompt, 2400));
     const list = (Array.isArray(data.ideas) ? data.ideas : Array.isArray(data) ? data : [])
         .map(i => ({
             title: String(i.title ?? ''),
