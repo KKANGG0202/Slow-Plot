@@ -365,3 +365,12 @@
 #sb_root .sb-wrap input,
 #sb_root .sb-wrap textarea,
 #sb_root .sb-wrap select { font-family: 'Jua', 'Noto Sans KR', sans-serif; }
+
+#sb_root .sb-idea-head { display: flex; align-items: flex-start; gap: 6px; }
+#sb_root .sb-idea-head .sb-idea-title { flex: 1; min-width: 0; }
+#sb_root .sb-idea-x {
+    all: unset; cursor: pointer; flex: none; width: 26px; height: 26px; border-radius: 8px;
+    display: flex; align-items: center; justify-content: center; color: #A99FC9; font-size: 13px;
+}
+#sb_root .sb-idea-x:hover { background: var(--sb-bg); color: #C0325E; }
+#sb_root .sb-idea-x:focus-visible { outline: 2px solid var(--sb-purple); }

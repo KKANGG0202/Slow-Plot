@@ -1033,7 +1033,10 @@ function renderIdeas(arc) {
     const loading = busy === 'ideas';
     const cards = (arc.ideas || []).map((idea, i) => `
         <div class="sb-idea">
-            <div class="sb-idea-title">${esc(idea.title)}</div>
+            <div class="sb-idea-head">
+                <div class="sb-idea-title">${esc(idea.title)}</div>
+                <button type="button" class="sb-idea-x" data-act="ideaDel" data-value="${i}" aria-label="이 카드 지우기"><i class="fa-solid fa-xmark"></i></button>
+            </div>
             <div class="sb-idea-story">${esc(idea.story)}</div>
             ${idea.ending ? `<div class="sb-sub"><i class="fa-solid fa-flag-checkered"></i> ${esc(idea.ending)}</div>` : ''}
             ${idea.moods.length ? `<div class="sb-idea-tags">${idea.moods.map(m => `<span>${esc(m)}</span>`).join('')}</div>` : ''}
@@ -1065,7 +1068,8 @@ function renderIdeas(arc) {
             <button type="button" class="sb-btn sb-idea-go" data-act="ideaGo" ${busy ? 'disabled' : ''}>
                 ${loading ? '<i class="fa-solid fa-spinner fa-spin"></i> 고민하는 중…' : `<i class="fa-solid fa-dice"></i> ${arc.ideas?.length ? '다른 아이디어 3개' : '아이디어 3개 받기'}`}
             </button>
-            ${cards ? `<div class="sb-ideas">${cards}</div>` : ''}
+            ${cards ? `<div class="sb-ideas">${cards}</div>
+            <button type="button" class="sb-btn sb-small sb-clear-inputs" data-act="ideaClear"><i class="fa-solid fa-broom"></i> 추천 카드 전부 지우기</button>` : ''}
         </div>` : ''}
     </div>`;
 }
@@ -1553,6 +1557,8 @@ async function onClick(e) {
             } finally { busy = ''; }
             break;
         }
+        case 'ideaDel': arc.ideas.splice(Number(val), 1); break;
+        case 'ideaClear': arc.ideas = []; break;
         case 'ideaUse': {
             const idea = arc.ideas?.[Number(val)];
             if (!idea) return;
