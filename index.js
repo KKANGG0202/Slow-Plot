@@ -11,7 +11,7 @@ const ROLES = { system: 0, user: 1, assistant: 2 };
 
 const defaultSettings = Object.freeze({
     enabled: true,
-    judgeInterval: 10,   // check every N chats
+    judgeInterval: 5,    // check every N bot replies
     minRatio: 0.7,       // never advance before this share of the stage's budget
     depth: 4,            // injection depth in chat
     role: 'system',
@@ -22,7 +22,7 @@ const defaultSettings = Object.freeze({
 
 const PRESETS = {
     mood: ['피폐', '애틋', '달달', '긴장감', '미스터리', '일상', '코믹', '성장', '구원', '집착'],
-    length: [200, 400, 800],
+    length: [30, 50, 100, 200, 400, 800],
     stages: ['auto', 3, 4, 5, 6, 7, 8],
 };
 
@@ -48,7 +48,7 @@ function newArc() {
             ending: '',       // optional: where it should end up
             moods: [], moodCustom: '', moodCustomOn: false,
             memo: '',
-            length: 400, lengthCustom: false,
+            length: 100, lengthCustom: false,
             stageCount: 'auto',
             stageCustom: false,
             ideaKeywords: '',
@@ -73,7 +73,8 @@ function newArc() {
         stageStarts: [],      // progress value at each stage's start
         lastJudge: 0,
         hold: false,          // stay mode: keep injecting the current chapter but never advance
-        frozenAt: null,       // message count when paused/held; those chats are not counted
+        frozenAt: null,
+        countMode: 'bot',     // progress counts bot replies only       // message count when paused/held; those chats are not counted
         ideas: [],            // last story suggestions: { title, story, ending, moods[] }
         inner: null,          // { text, warmth, at } — char's hidden feelings, for the hint box
         log: [],
@@ -89,6 +90,7 @@ function getArc() {
     const { chatMetadata } = ctx();
     if (!chatMetadata[MODULE]) chatMetadata[MODULE] = newArc();
     const arc = chatMetadata[MODULE];
+    migrateCounting(arc);
     const fresh = newArc();
     for (const k of Object.keys(fresh)) if (!Object.hasOwn(arc, k)) arc[k] = fresh[k];
     for (const k of Object.keys(fresh.setup)) if (!Object.hasOwn(arc.setup, k)) arc.setup[k] = fresh.setup[k];
@@ -101,8 +103,35 @@ function save() {
 
 // ---------- counting / pacing ----------
 
+// Pacing counts only the bot's replies: user inputs vary too much in size to be a fair clock.
 function messageCount() {
-    return ctx().chat.filter(m => !m.is_system).length;
+    return ctx().chat.filter(m => !m.is_system && !m.is_user).length;
+}
+
+// Bot replies among the first `n` non-system messages (converts counts saved by older versions).
+function botsWithin(n) {
+    let seen = 0, bots = 0;
+    for (const m of ctx().chat) {
+        if (m.is_system) continue;
+        if (seen >= n) break;
+        seen++;
+        if (!m.is_user) bots++;
+    }
+    return bots;
+}
+
+function migrateCounting(arc) {
+    if (arc.countMode === 'bot') return;
+    if (arc.status !== 'setup' && arc.status !== 'draft') {
+        const oldBase = Number(arc.base) || 0;
+        const toNew = p => Math.max(0, botsWithin(oldBase + p) - botsWithin(oldBase));
+        arc.stageStarts = (arc.stageStarts || []).map(toNew);
+        arc.lastJudge = toNew(Number(arc.lastJudge) || 0);
+        if (arc.frozenAt != null) arc.frozenAt = botsWithin(arc.frozenAt);
+        arc.base = botsWithin(oldBase);
+        arc.setup.length = Math.max(5, Math.round(Number(arc.setup.length) / 2));
+    }
+    arc.countMode = 'bot';
 }
 
 function isFrozen(arc) {
@@ -169,12 +198,12 @@ function planBudgets(arc, from, chatsLeft) {
     const pool = Math.max(0, chatsLeft - fixedSum);
     return rest.map(st => isFixed(st)
         ? Number(st.chats)
-        : Math.max(4, Math.round(pool * stageWeight(st, avg) / weightSum)));
+        : Math.max(2, Math.round(pool * stageWeight(st, avg) / weightSum)));
 }
 
 function stageBudget(arc) {
     const chatsLeft = Math.max(0, Number(arc.setup.length) - stageStart(arc));
-    return Math.max(4, planBudgets(arc, arc.current, chatsLeft)[0] || 4);
+    return Math.max(2, planBudgets(arc, arc.current, chatsLeft)[0] || 2);
 }
 
 // Budget shown on each stage row: done stages show what they took, the rest the current plan.
@@ -270,7 +299,7 @@ const DEFAULT_PROMPTS = Object.freeze({
         '',
         '{{recent_chat}}',
         '',
-        'Total length: about {{length}} chat messages.',
+        'Total length: about {{length}} replies from {{char}} (each usually answering one message from {{user}}).',
         'Number of chapters: {{chapter_count}}',
         '',
         'Guidelines:',
@@ -338,7 +367,7 @@ const SPICE_TEXT = {
 // Output formats stay fixed so edited prompts can never break parsing.
 const PLAN_FORMAT = [
     '',
-    'Also give each chapter "chats": how many of the roughly {{length}} messages it should take. Brief interludes (a short visit, a single incident) get few; major turns and their aftermath get more. All chapters together should add up to about {{length}}.',
+    'Also give each chapter "chats": how many of the roughly {{length}} replies it should take. Brief interludes (a short visit, a single incident) get few; major turns and their aftermath get more. All chapters together should add up to about {{length}}.',
     'Return JSON only, in exactly this shape:',
     '{"arc":{"premise":"<the overall story in 1-2 English sentences>","ending":"<the destination in English, or empty>","tone":"<tone in English, one short phrase>","notes":"<things to keep, in English, or empty>","obstacles":"<the obstacle characters or situations in one English sentence, or empty>"},',
     ' "chapters":[{"title_ko":"<short Korean title>","summary_ko":"<one or two Korean sentences>","title_en":"<short English title>","guide_en":"<2-3 English sentences on what unfolds in this chapter and how it feels>","chats":<integer>}]}',
@@ -907,9 +936,9 @@ function renderSetup(arc) {
             ${s.innerHint ? '<p class="sb-sub">진행 중에 깡통 속마음 한 줄과 마음 온도를 보여줘요. 판정할 때 같이 갱신돼요</p>' : ''}
         </div>
         <div class="sb-field">
-            <p class="sb-label">몇 챗 동안? <span class="sb-sub">(내 메시지 + 봇 답변)</span></p>
+            <p class="sb-label">몇 챗 동안? <span class="sb-sub">(봇 답변 기준. 내 메시지는 안 세요)</span></p>
             <div class="sb-chips">${lenChips}</div>
-            ${s.lengthCustom ? `<input class="sb-input sb-num" type="number" min="20" step="10" data-bind="length" value="${esc(s.length)}">` : ''}
+            ${s.lengthCustom ? `<input class="sb-input sb-num" type="number" min="5" step="5" data-bind="length" value="${esc(s.length)}">` : ''}
         </div>
         <div class="sb-field">
             <p class="sb-label">몇 단계로?</p>
@@ -1006,7 +1035,7 @@ function renderRefs(arc) {
             ${chip(`${c.name1} 페르소나`, s.usePersona, 'usePersona', '1')}
             ${chip('최근 대화 반영', s.planUseChat, 'planUseChat', '1')}
         </div>
-        ${s.planUseChat || s.ideaUseChat ? `<label class="sb-sub sb-block sb-chatcount">최근 몇 챗까지 읽을까요? <span>(1~100, 아이디어 추천에도 같이 써요)</span>
+        ${s.planUseChat || s.ideaUseChat ? `<label class="sb-sub sb-block sb-chatcount">최근 메시지 몇 개까지 읽을까요? <span>(내 메시지 + 봇 답변, 1~100, 아이디어 추천에도 같이 써요)</span>
             <input class="sb-input sb-num" type="number" min="1" max="100" data-bind="chatCount" value="${esc(s.chatCount)}">
         </label>` : ''}
         <div class="sb-wi">
@@ -1210,7 +1239,7 @@ function renderAdvanced() {
             </select>
             <span class="sb-block">저렴한 모델의 연결 프로필을 고르면 판정 비용을 아낄 수 있어요. 채팅 연결은 그대로예요.</span>
         </label>
-        <label class="sb-sub sb-block">판정 주기 (몇 챗마다)
+        <label class="sb-sub sb-block">판정 주기 (봇 답변 몇 개마다)
             <input class="sb-input sb-num" type="number" min="2" max="100" data-setting="judgeInterval" value="${s.judgeInterval}">
         </label>
         <label class="sb-sub sb-block">최소 머무르기 (단계별 배정량의 %)
@@ -1531,7 +1560,7 @@ function onInput(e) {
     const arc = hasChat() ? getArc() : null;
     if (el.dataset.bind && arc) {
         const k = el.dataset.bind;
-        if (k === 'length') arc.setup.length = Math.max(20, Number(el.value) || 400);
+        if (k === 'length') arc.setup.length = Math.max(5, Number(el.value) || 100);
         else if (k === 'chatCount') arc.setup.chatCount = Math.min(100, Math.max(1, Math.round(Number(el.value) || 30)));
         else if (k === 'stageCount') arc.setup.stageCount = Math.min(15, Math.max(2, Math.round(Number(el.value) || 5)));
         else arc.setup[k] = el.value;
