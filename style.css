@@ -427,3 +427,4 @@
 #sb_quick .sbq-grid button.on { background: #8FE3C4; color: #1E5C46; box-shadow: 0 3px 0 #5CC59F; }
 #sb_quick .sbq-grid button:disabled { opacity: .4; cursor: default; }
 #sb_quick .sbq-empty { font-size: 13px; color: #6E6390; text-align: center; line-height: 1.5; margin: 6px 0; }
+#sb_root .sb-cast-wi { align-self: flex-start; margin-top: 8px; }

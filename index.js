@@ -60,6 +60,7 @@ function newArc() {
             ideaAvoid: '',
             ideaFocus: 'both',  // both | char | user | ensemble
             planUseChat: true,
+            castExtra: '',      // extra character names for multi-character bots (comma separated)
             chatCount: 30,     // how many recent messages planning/ideas read
             difficulty: 'normal', // easy | normal | hard | hell
             obstacles: false,
@@ -649,6 +650,8 @@ function moodList(arc) {
 function castNames() {
     const c = ctx();
     const names = [];
+    const arc = hasChat() ? getArc() : null;
+    const extra = String(arc?.setup?.castExtra || '').split(/[,，\n]/).map(x => x.trim()).filter(Boolean);
     if (c.groupId) {
         const g = (c.groups || []).find(x => x.id === c.groupId);
         for (const av of g?.members || []) {
@@ -656,7 +659,8 @@ function castNames() {
             if (ch?.name) names.push(ch.name);
         }
     }
-    if (!names.length && c.name2) names.push(c.name2);
+    if (!names.length && !extra.length && c.name2) names.push(c.name2);
+    names.push(...extra);
     if (c.name1) names.push(c.name1);
     return [...new Set(names)];
 }
@@ -1157,6 +1161,12 @@ function renderRefs(arc) {
     }
     return `
     <div class="sb-field">
+        <p class="sb-label">등장인물 <span class="sb-sub">(다인봇이면 이름을 쉼표로 써주세요)</span></p>
+        <input class="sb-input" data-bind="castExtra" placeholder="예: 하루, 유키, 렌 (갠봇이면 비워도 돼요)" value="${esc(s.castExtra)}">
+        ${wiCount(arc) ? '<button type="button" class="sb-btn sb-small sb-cast-wi" data-act="castFromWi"><i class="fa-solid fa-book"></i> 체크한 월드인포 항목 이름 불러오기</button>' : ''}
+        <p class="sb-sub">과정 만들 때 이 사람들한테 골고루 이야기를 나눠주고, 단계별 "이끄는 인물" 칩으로도 떠요</p>
+    </div>
+    <div class="sb-field">
         <p class="sb-label">참고할 자료 <span class="sb-sub">(과정 만들 때 AI가 읽어요)</span></p>
         <div class="sb-chips">
             ${chip(`${c.name2} 캐릭터 설정`, s.useChar, 'useChar', '1')}
@@ -1651,6 +1661,16 @@ async function onClick(e) {
             break;
         case 'useChar': su.useChar = !su.useChar; break;
         case 'usePersona': su.usePersona = !su.usePersona; break;
+        case 'castFromWi': {
+            const labels = [];
+            for (const [book, uids] of Object.entries(su.wi)) {
+                for (const e of wiCache.get(book) || []) if (uids.includes(e.uid)) labels.push(e.label);
+            }
+            const have = su.castExtra.split(/[,，\n]/).map(x => x.trim()).filter(Boolean);
+            su.castExtra = [...new Set([...have, ...labels])].join(', ');
+            toastr.info('항목 이름을 불러왔어요. 사람 이름이 아닌 건 지워주세요', 'Slow Plot');
+            break;
+        }
         case 'planUseChat': su.planUseChat = !su.planUseChat; break;
         case 'ideaSpice': su.ideaSpice = val; break;
         case 'difficulty': su.difficulty = val; break;
