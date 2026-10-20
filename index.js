@@ -544,7 +544,22 @@ function updateInjection() {
 
 // Sends a planning/judging request through the chosen connection profile,
 // or through the current connection when none is chosen.
+const LLM_TIMEOUT_MS = 150000;
+
+// Never let a stuck request freeze the panel: give up after a while.
+function withTimeout(promise) {
+    let timer;
+    const timeout = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('응답이 너무 오래 걸려서 멈췄어요 (API 상태를 확인해 주세요)')), LLM_TIMEOUT_MS);
+    });
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 async function askLLM(systemPrompt, prompt, maxTokens = 1500) {
+    return withTimeout(askLLMRaw(systemPrompt, prompt, maxTokens));
+}
+
+async function askLLMRaw(systemPrompt, prompt, maxTokens) {
     const c = ctx();
     const { profileId } = getSettings();
     if (profileId) {
@@ -738,7 +753,7 @@ async function translateStage(arc, st) {
         '',
         'Return JSON only: {"title_en":"<short English title>","guide_en":"<2-3 English sentences on what unfolds in this chapter and how it feels>"}',
     ].join('\n');
-    const data = parseJson(await askLLM('You are a precise translator. Output only valid JSON.', prompt, 600));
+    const data = parseJson(await askLLM('You are a precise translator. Output only valid JSON.', prompt, 1000));
     st.title_en = String(data.title_en ?? st.title_ko);
     st.guide_en = String(data.guide_en ?? st.summary_ko);
 }
@@ -827,7 +842,7 @@ async function judgeStage(arc) {
         recent_messages: transcript,
         difficulty_judge: difficultyJudgeText(arc, base),
     }) + '\n\n' + fillTemplate(judgeFormat(canRegress, arc.setup.innerHint), base);
-    const data = parseJson(await askLLM('You are a careful story analyst. Output only valid JSON.', prompt, 500));
+    const data = parseJson(await askLLM('You are a careful story analyst. Output only valid JSON.', prompt, 1500));
     return {
         done: data.done === true || data.done === 'true',
         regress: canRegress && (data.regress === true || data.regress === 'true'),
@@ -855,7 +870,7 @@ async function peekInner(arc) {
         chapter: st ? `${st.title_en}. ${st.guide_en}` : '',
         recent_messages: recent.map(m => `${m.name}: ${clip(m.mes, 600)}`).join('\n'),
     }) + '\n\n' + fillTemplate(`Answer with JSON only: {${INNER_FIELDS}}`, base);
-    const inner = readInner(parseJson(await askLLM('You are a perceptive reader of characters. Output only valid JSON.', prompt, 300)));
+    const inner = readInner(parseJson(await askLLM('You are a perceptive reader of characters. Output only valid JSON.', prompt, 800)));
     if (!inner) throw new Error('속마음이 비어 있음');
     return inner;
 }
@@ -950,10 +965,11 @@ async function maybeJudge(force = false) {
     } catch (err) {
         console.error(LOG, 'judge failed', err);
         pushLog(arc, false, '판정 실패: ' + err.message);
+        toastr.warning('판정 실패: ' + err.message, 'Slow Plot');
     } finally {
         judging = false;
         updateInjection();
-        softRender();
+        if (activeTab === 'plot') softRender(); else { renderQuick(); if (editing < 0) render(); }
     }
 }
 
@@ -1287,7 +1303,7 @@ function renderProgress(arc) {
     else {
         const toJudge = Math.max(0, Number(s.judgeInterval) - (p - arc.lastJudge));
         const minLeft = Math.max(0, Math.ceil(stageBudget(arc) * judgeGate(arc) - (p - stageStart(arc))));
-        const judgeText = judging ? '지금 판정하는 중…' : (minLeft > 0 ? `${minLeft}챗 뒤부터 판정 시작` : `다음 판정까지 ${toJudge}챗`);
+        const judgeText = judging ? '지금 판정하는 중… (모델에 따라 1분쯤 걸려요)' : (minLeft > 0 ? `${minLeft}챗 뒤부터 판정 시작` : `다음 판정까지 ${toJudge}챗`);
         if (arc.status === 'paused') {
             status = `<b>${arc.current + 1}단계에서 일시정지 중</b><br>AI한테 아무것도 안 보내고, 멈춘 동안의 챗은 세지 않아요`;
         } else if (arc.hold) {
