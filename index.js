@@ -18,7 +18,6 @@ const defaultSettings = Object.freeze({
     judgeWindow: 20,     // how many recent messages the judge reads
     profileId: '',       // connection profile for planning/judging; '' = current connection
     prompts: {},         // user overrides of DEFAULT_PROMPTS, keyed by prompt id
-    miniBar: true,       // small progress strip above the chat input
 });
 
 const PRESETS = {
@@ -956,10 +955,8 @@ async function maybeJudge(force = false) {
 
 let busy = '';            // '', 'generate', 'translate'
 let editing = -1;
-let setupOpen = true;
 let wiOpen = false;
 let ideaOpen = false;
-let advOpen = false;
 
 function esc(s) {
     return String(s ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', '\'': '&#39;' }[ch]));
@@ -991,11 +988,7 @@ function renderSetup(arc) {
 
     return `
     <div class="sb-card">
-        <button type="button" class="sb-card-head" data-act="toggleSetup" aria-expanded="${setupOpen}">
-            <span>줄거리 설정</span>
-            <i class="fa-solid ${setupOpen ? 'fa-chevron-up' : 'fa-chevron-down'}"></i>
-        </button>
-        ${setupOpen ? `
+        ${true ? `
         <div class="sb-field">
             <p class="sb-label">어떤 이야기가 보고 싶어?</p>
             <textarea class="sb-input sb-textarea sb-plot" data-bind="plot" placeholder="예: 깡통이랑 깡캐는 옆집 빵집 사장끼리라 매일 티격태격해. 동네 축제 준비를 같이 맡게 되면서 투닥거리다가 점점 손발이 맞아갔으면 좋겠어">${esc(s.plot)}</textarea>
@@ -1394,21 +1387,13 @@ function renderAdvanced() {
     const s = getSettings();
     return `
     <div class="sb-card sb-adv">
-        <button type="button" class="sb-card-head" data-act="advToggle" aria-expanded="${advOpen}">
-            <span>세부 설정</span>
-            <i class="fa-solid ${advOpen ? 'fa-chevron-up' : 'fa-chevron-down'}"></i>
-        </button>
-        ${advOpen ? `
+        ${true ? `
         <label class="sb-sub sb-block">과정 만들기 · 판정에 쓸 API
             <select class="sb-input sb-wide" data-setting="profileId">
                 <option value="">지금 채팅 연결 그대로</option>
                 ${listProfiles().map(p => `<option value="${esc(p.id)}" ${s.profileId === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
             </select>
             <span class="sb-block">저렴한 모델의 연결 프로필을 고르면 판정 비용을 아낄 수 있어요. 채팅 연결은 그대로예요.</span>
-        </label>
-        <label class="sb-switch-row">
-            <input type="checkbox" data-setting="miniBar" ${s.miniBar ? 'checked' : ''}>
-            <span>채팅창 위에 작은 진행 표시 보기</span>
         </label>
         <label class="sb-sub sb-block">판정 주기 (봇 답변 몇 개마다)
             <input class="sb-input sb-num" type="number" min="2" max="100" data-setting="judgeInterval" value="${s.judgeInterval}">
@@ -1477,71 +1462,112 @@ function importPrompts(text) {
     return next;
 }
 
-// ---------- mini bar above the chat input ----------
+// ---------- quick panel (opened from the wand menu) ----------
 
-let miniOpen = false;
+let quickOpen = false;
+let quickInnerShown = false;
 
-function renderMiniBar() {
-    let bar = document.getElementById('sb_minibar');
-    const s = getSettings();
-    const arc = hasChat() ? getArc() : null;
-    const show = s.enabled && s.miniBar && arc && ['running', 'paused', 'done'].includes(arc.status) && arc.stages.length;
-    if (!show) { bar?.remove(); return; }
-    if (!bar) {
-        const host = document.getElementById('send_form');
-        if (!host?.parentElement) return;
-        bar = document.createElement('div');
-        bar.id = 'sb_minibar';
-        host.parentElement.insertBefore(bar, host);
-        bar.addEventListener('click', onMiniClick);
-    }
-    const st = arc.stages[arc.current];
-    const p = progress(arc);
-    let state = '';
-    if (arc.status === 'done') state = '완료';
-    else if (arc.status === 'paused') state = '일시정지';
-    else if (arc.hold) state = '머무는 중';
-    else if (isBreather(arc, p + 1)) state = '다음은 숨 고르기';
-    const flags = [arc.eventPending ? '🎲' : '', arc.nudgePending ? '👉' : ''].join('');
-    const running = arc.status === 'running';
-    bar.innerHTML = `
-        <button type="button" class="sb-mini-main" data-mini="toggle" aria-expanded="${miniOpen}">
-            ${SNAIL_SVG.replace('sb-snail', 'sb-mini-icon')}
-            <span class="sb-mini-stage">${arc.current + 1}/${arc.stages.length} ${esc(st?.title_ko || '')}</span>
-            <span class="sb-mini-meta">${flags} ${state ? esc(state) + ' · ' : ''}${p}/${arc.setup.length}챗</span>
-        </button>
-        ${miniOpen ? `<div class="sb-mini-actions">
-            <button type="button" data-mini="nudge" ${running && !arc.hold ? '' : 'disabled'}>${arc.nudgePending ? '밀기 취소' : '👉 살짝 밀기'}</button>
-            <button type="button" data-mini="event" ${running ? '' : 'disabled'}>${arc.eventPending ? '돌발 취소' : '🎲 돌발'}</button>
-            <button type="button" data-mini="pause" ${arc.status === 'done' ? 'disabled' : ''}>${arc.status === 'paused' ? '▶ 다시 시작' : 'Ⅱ 멈춤'}</button>
-            <button type="button" data-mini="hide" aria-label="진행 표시 숨기기">✕</button>
-        </div>` : ''}`;
+function addWandButton() {
+    const menu = document.getElementById('extensionsMenu');
+    if (!menu || document.getElementById('sb_wand_btn')) return;
+    const item = document.createElement('div');
+    item.id = 'sb_wand_btn';
+    item.className = 'list-group-item flex-container flexGap5 interactable';
+    item.tabIndex = 0;
+    item.setAttribute('role', 'button');
+    item.innerHTML = `${SNAIL_SVG.replace('sb-snail', 'sb-wand-icon')}<span>Slow Plot</span>`;
+    const open = () => { quickOpen = true; quickInnerShown = false; renderQuick(); };
+    item.addEventListener('click', open);
+    item.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+    menu.appendChild(item);
 }
 
-function onMiniClick(e) {
-    const btn = e.target.closest('[data-mini]');
+function renderQuick() {
+    let box = document.getElementById('sb_quick');
+    if (!quickOpen) { box?.remove(); return; }
+    if (!box) {
+        box = document.createElement('div');
+        box.id = 'sb_quick';
+        document.body.appendChild(box);
+        box.addEventListener('click', onQuickClick);
+        box.addEventListener('keydown', e => { if (e.key === 'Escape') { quickOpen = false; renderQuick(); } });
+    }
+    const arc = hasChat() ? getArc() : null;
+    const live = arc && ['running', 'paused', 'done'].includes(arc.status) && arc.stages.length;
+    let body = '<p class="sbq-empty">진행 중인 과정이 없어요.<br>확장 메뉴의 Slow Plot에서 과정을 만들고 시작해 주세요.</p>';
+    if (live) {
+        const st = arc.stages[arc.current];
+        const p = progress(arc);
+        const running = arc.status === 'running';
+        let state;
+        if (arc.status === 'done') state = '모든 단계 완료!';
+        else if (arc.status === 'paused') state = '일시정지 중';
+        else if (arc.hold) state = '이 단계에 머무는 중';
+        else state = phaseLabel(effRipeness(arc));
+        const flags = [];
+        if (running && isBreather(arc, p + 1)) flags.push('다음 답변은 숨 고르기');
+        if (arc.nudgePending) flags.push('👉 살짝 밀기 대기');
+        if (arc.eventPending) flags.push('🎲 돌발 대기');
+        if (judging) flags.push('판정하는 중…');
+        const inner = arc.setup.innerHint && arc.inner ? `
+            <button type="button" class="sbq-inner ${quickInnerShown ? '' : 'sb-blur'}" data-quick="inner">💭 “${esc(arc.inner.text)}”${Number.isFinite(arc.inner.warmth) ? ` · ${arc.inner.warmth}°` : ''}</button>` : '';
+        body = `
+            <div class="sbq-stage">${arc.current + 1}/${arc.stages.length} · ${esc(st?.title_ko || '')}</div>
+            <div class="sbq-meta">${esc(state)} · ${p}/${arc.setup.length}챗</div>
+            ${flags.length ? `<div class="sbq-flags">${flags.map(esc).join(' · ')}</div>` : ''}
+            ${inner}
+            <div class="sbq-grid">
+                <button type="button" data-quick="nudge" class="${arc.nudgePending ? 'on' : ''}" ${running && !arc.hold ? '' : 'disabled'}>👉 ${arc.nudgePending ? '밀기 취소' : '살짝 밀기'}</button>
+                <button type="button" data-quick="event" class="${arc.eventPending ? 'on' : ''}" ${running ? '' : 'disabled'}>🎲 ${arc.eventPending ? '돌발 취소' : '돌발 사건'}</button>
+                <button type="button" data-quick="hold" class="${arc.hold ? 'on' : ''}" ${running ? '' : 'disabled'}>📌 ${arc.hold ? '머물기 끝' : '머물기'}</button>
+                <button type="button" data-quick="judge" ${running && !arc.hold && !judging ? '' : 'disabled'}>🔍 지금 판정</button>
+                <button type="button" data-quick="pause" ${arc.status === 'done' ? 'disabled' : ''}>${arc.status === 'paused' ? '▶ 다시 시작' : 'Ⅱ 일시정지'}</button>
+                <button type="button" data-quick="next" ${arc.status === 'done' ? 'disabled' : ''}>⏭ 다음 단계</button>
+            </div>`;
+    }
+    box.innerHTML = `
+        <div class="sbq-backdrop" data-quick="close"></div>
+        <div class="sbq-card" role="dialog" aria-label="Slow Plot 빠른 조작">
+            <div class="sbq-head">
+                ${SNAIL_SVG.replace('sb-snail', 'sbq-icon')}
+                <span class="sbq-title">Slow Plot</span>
+                <button type="button" class="sbq-x" data-quick="close" aria-label="닫기">✕</button>
+            </div>
+            ${body}
+        </div>`;
+}
+
+function onQuickClick(e) {
+    const btn = e.target.closest('[data-quick]');
     if (!btn || btn.disabled) return;
+    const act = btn.dataset.quick;
+    if (act === 'close') { quickOpen = false; renderQuick(); return; }
     const arc = hasChat() ? getArc() : null;
     if (!arc) return;
-    switch (btn.dataset.mini) {
-        case 'toggle': miniOpen = !miniOpen; break;
+    switch (act) {
+        case 'inner': quickInnerShown = !quickInnerShown; break;
         case 'nudge': arc.nudgePending = !arc.nudgePending; break;
         case 'event': arc.eventPending = !arc.eventPending; break;
+        case 'hold': toggleHold(arc); break;
         case 'pause': if (arc.status === 'paused') resumeArc(arc); else pauseArc(arc); break;
-        case 'hide':
-            getSettings().miniBar = false;
-            ctx().saveSettingsDebounced();
-            toastr.info('세부 설정에서 다시 켤 수 있어요', 'Slow Plot');
-            break;
+        case 'next': advance(arc, true); break;
+        case 'judge': save(); maybeJudge(true); renderQuick(); return;
     }
     save();
     updateInjection();
-    renderMiniBar();
+    renderQuick();
     softRender();
 }
 
+let activeTab = 'plot';   // plot | progress | settings
+
+function renderTabs(arc) {
+    const tabs = [['plot', '📝 줄거리'], ['progress', '🐌 진행'], ['settings', '⚙️ 설정']];
+    return `<div class="sb-tabs" role="tablist">${tabs.map(([k, l]) => `<button type="button" role="tab" class="sb-tab${activeTab === k ? ' on' : ''}" aria-selected="${activeTab === k}" data-act="tab" data-value="${k}">${l}${k === 'progress' && arc && arc.stages.length ? ` <span class="sb-tab-badge">${arc.status === 'draft' ? '새' : `${arc.current + 1}/${arc.stages.length}`}</span>` : ''}</button>`).join('')}</div>`;
+}
+
 function render() {
-    renderMiniBar();
+    renderQuick();
     const body = document.getElementById('sb_body');
     if (!body) return;
     const s = getSettings();
@@ -1553,7 +1579,17 @@ function render() {
         return;
     }
     const arc = getArc();
-    body.innerHTML = renderSetup(arc) + renderProgress(arc) + renderLog(arc) + renderAdvanced();
+    let content;
+    if (activeTab === 'progress') {
+        content = arc.stages.length
+            ? renderProgress(arc) + renderLog(arc)
+            : '<div class="sb-card sb-center sb-sub">아직 과정이 없어요. 📝 줄거리 탭에서 과정을 만들어 주세요</div>';
+    } else if (activeTab === 'settings') {
+        content = renderAdvanced();
+    } else {
+        content = renderSetup(arc);
+    }
+    body.innerHTML = renderTabs(arc) + content;
 }
 
 async function onPromptAction(act) {
@@ -1589,12 +1625,11 @@ async function onClick(e) {
     if (!btn || btn.disabled) return;
     const act = btn.dataset.act;
     const val = btn.dataset.value;
-    if (act === 'toggleSetup') { setupOpen = !setupOpen; render(); return; }
+    if (act === 'tab') { activeTab = val; render(); return; }
     if (act === 'wiToggle') { wiOpen = !wiOpen; render(); return; }
     if (act === 'ideaToggle') { ideaOpen = !ideaOpen; render(); return; }
     if (act === 'logToggle') { openLog = openLog === Number(val) ? -1 : Number(val); render(); return; }
     if (act === 'ideaMoreToggle') { ideaMoreOpen = !ideaMoreOpen; render(); return; }
-    if (act === 'advToggle') { advOpen = !advOpen; render(); return; }
     if (act === 'promptReset' || act === 'promptExport' || act === 'promptImport') {
         await onPromptAction(act);
         return;
@@ -1723,7 +1758,7 @@ async function onClick(e) {
                 await generateStages(arc);
                 Object.assign(arc, { status: 'draft', current: 0, stageStarts: [], lastJudge: 0, log: [] });
                 editing = -1;
-                setupOpen = false;
+                activeTab = 'progress';
                 toastr.success('과정을 만들었어요! 마음에 안 드는 단계는 고쳐보세요', 'Slow Plot');
             } catch (err) {
                 console.error(LOG, err);
@@ -1751,7 +1786,7 @@ async function onClick(e) {
             const ok = await c.Popup.show.confirm('단계 전부 지우기', '만들어진 단계와 진행 상황, 판정 기록을 한 번에 지울까요? 위에 써둔 줄거리 설정은 그대로 남아요.');
             if (!ok) return;
             Object.assign(arc, { stages: [], arcEn: null, status: 'setup', current: 0, base: 0, stageStarts: [], lastJudge: 0, hold: false, frozenAt: null, log: [] });
-            editing = -1; setupOpen = true;
+            editing = -1; activeTab = 'plot';
             toastr.info('단계를 전부 지웠어요', 'Slow Plot');
             break;
         }
@@ -1767,7 +1802,7 @@ async function onClick(e) {
             const ok = await c.Popup.show.confirm('과정 지우기', '이 채팅의 줄거리 과정과 기록을 모두 지울까요?');
             if (!ok) return;
             c.chatMetadata[MODULE] = newArc();
-            editing = -1; setupOpen = true;
+            editing = -1; activeTab = 'plot';
             break;
         }
 
@@ -1882,7 +1917,6 @@ function onInput(e) {
     if (el.dataset.setting) {
         const s = getSettings();
         const k = el.dataset.setting;
-        if (k === 'miniBar') { s.miniBar = el.checked; ctx().saveSettingsDebounced(); renderMiniBar(); return; }
         if (k === 'role' || k === 'profileId') s[k] = el.value;
         else if (k === 'minRatio') s.minRatio = Math.min(100, Math.max(0, Number(el.value) || 0)) / 100;
         else s[k] = Math.max(0, Number(el.value) || 0);
@@ -1944,7 +1978,7 @@ function afterBotReply() {
 
 // Re-render from background events without wiping what the user is typing.
 function softRender() {
-    renderMiniBar();
+    renderQuick();
     if (editing >= 0) return;
     if (document.activeElement?.closest?.('#sb_root .sb-input')) return;
     render();
@@ -1953,7 +1987,7 @@ function softRender() {
 function refresh() {
     editing = -1;
     const arc = hasChat() ? getArc() : null;
-    setupOpen = !arc || !arc.stages.length;
+    activeTab = arc && arc.stages.length ? 'progress' : 'plot';
     updateInjection();
     render();
 }
@@ -1963,6 +1997,7 @@ function refresh() {
     eventSource.on(event_types.APP_READY, () => {
         getSettings();
         buildPanel();
+        addWandButton();
         refresh();
     });
     eventSource.on(event_types.CHAT_CHANGED, refresh);
