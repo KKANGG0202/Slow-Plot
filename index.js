@@ -1317,7 +1317,7 @@ function renderProgress(arc) {
     else {
         const toJudge = Math.max(0, judgeInterval(arc) - (p - arc.lastJudge));
         const minLeft = Math.max(0, Math.ceil(stageBudget(arc) * judgeGate(arc) - (p - stageStart(arc))));
-        const judgeText = judging ? '지금 판정하는 중… (모델에 따라 1분쯤 걸려요)' : (minLeft > 0 ? `${minLeft}챗 뒤부터 판정 시작` : `다음 판정까지 ${toJudge}챗`);
+        const judgeText = judging ? '지금 판정하는 중… (모델에 따라 1분쯤 걸려요)' : `다음 판정까지 ${Math.max(minLeft, toJudge, 1)}챗`;
         if (arc.status === 'paused') {
             status = `<b>${arc.current + 1}단계에서 일시정지 중</b><br>AI한테 아무것도 안 보내고, 멈춘 동안의 챗은 세지 않아요`;
         } else if (arc.hold) {
