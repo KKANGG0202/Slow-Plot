@@ -259,7 +259,7 @@
     background: #fff; border-radius: 14px; padding: 12px; font-size: 14px; color: #4E4470; line-height: 1.5;
     word-break: keep-all; overflow-wrap: anywhere; transition: filter .2s;
 }
-#sb_root .sb-inner-text.hidden { filter: blur(6px); user-select: none; }
+#sb_root .sb-inner-text.sb-blur { filter: blur(6px); user-select: none; }
 #sb_root .sb-inner-text:focus-visible { outline: 2px solid var(--sb-purple); }
 #sb_root .sb-inner .sb-sub { margin: 0; }
 

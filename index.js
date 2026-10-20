@@ -1132,7 +1132,7 @@ function renderInner(arc) {
         </div>
         ${Number.isFinite(w) ? `<div class="sb-meter" role="img" aria-label="마음 온도 ${w}"><span style="width:${w}%"></span></div>` : ''}
         ${inner
-            ? `<button type="button" class="sb-inner-text ${innerShown ? '' : 'hidden'}" data-act="innerReveal" aria-label="속마음 보기">“${esc(inner.text)}”</button>
+            ? `<button type="button" class="sb-inner-text ${innerShown ? '' : 'sb-blur'}" data-act="innerReveal" aria-label="속마음 보기">“${esc(inner.text)}”</button>
                ${innerShown ? '' : '<p class="sb-sub sb-center">스포일러 방지! 눌러서 보기</p>'}
                <p class="sb-sub sb-center">${inner.at}챗째에 엿본 마음</p>`
             : '<p class="sb-sub sb-center">아직 몰라요. 판정할 때 같이 알아내거나, 지금 엿볼 수 있어요</p>'}
