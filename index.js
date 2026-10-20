@@ -2023,7 +2023,15 @@ function refresh() {
         refresh();
     });
     eventSource.on(event_types.CHAT_CHANGED, refresh);
-    eventSource.on(event_types.GENERATION_AFTER_COMMANDS, () => updateInjection());
+    // Only the bot's own replies get the direction: background requests from other
+    // extensions (translators, summaries: type 'quiet') and impersonation stay clean.
+    eventSource.on(event_types.GENERATION_AFTER_COMMANDS, (type) => {
+        if (type === 'quiet' || type === 'impersonate') {
+            ctx().setExtensionPrompt(MODULE, '', PROMPT_NONE, 0);
+            return;
+        }
+        updateInjection();
+    });
     eventSource.on(event_types.MESSAGE_SENT, () => { updateInjection(); softRender(); });
     eventSource.on(event_types.MESSAGE_DELETED, () => { updateInjection(); softRender(); });
     eventSource.on(event_types.MESSAGE_RECEIVED, () => {
