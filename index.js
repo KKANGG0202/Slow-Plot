@@ -949,8 +949,14 @@ async function maybeJudge(force = false) {
     softRender();
     try {
         arc.lastJudge = p;
+        console.log(LOG, 'judging chapter', arc.current + 1, 'at', p, manual ? '(manual)' : '(auto)');
         const res = await judgeStage(arc);
-        if (ctx().getCurrentChatId() !== chatId) return;
+        console.log(LOG, 'judge result', res);
+        if (ctx().getCurrentChatId() !== chatId) {
+            console.warn(LOG, 'chat changed while judging; result dropped');
+            toastr.info('판정 중에 채팅방이 바뀌어서 결과를 버렸어요', 'Slow Plot');
+            return;
+        }
         if (res.inner) { arc.inner = { ...res.inner, at: progress(arc) }; innerShown = false; }
         const tooEarly = res.done && ripeness(arc) < judgeGate(arc);
         if (res.regress && !res.done) {
@@ -1399,10 +1405,11 @@ function renderInner(arc) {
 let openLog = -1;
 
 function renderLog(arc) {
-    if (!arc.log.length) return '';
+    if (!arc.log.length && !judging) return '';
     return `
     <div class="sb-card">
         <p class="sb-label">판정 기록</p>
+        ${judging ? '<div class="sb-log sb-log-pending"><i class="fa-solid fa-spinner fa-spin"></i> 판정하는 중… 결과가 오면 여기에 떠요</div>' : ''}
         ${arc.log.slice(0, 8).map((l, i) => l.detail
             ? `<button type="button" class="sb-log sb-log-btn ${l.ok ? 'ok' : ''}" data-act="logToggle" data-value="${i}" aria-expanded="${openLog === i}">
                 <span>${l.at}챗 · ${esc(l.text)}</span>

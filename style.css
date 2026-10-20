@@ -428,3 +428,4 @@
 #sb_quick .sbq-grid button:disabled { opacity: .4; cursor: default; }
 #sb_quick .sbq-empty { font-size: 13px; color: #6E6390; text-align: center; line-height: 1.5; margin: 6px 0; }
 #sb_root .sb-cast-wi { align-self: flex-start; margin-top: 8px; }
+#sb_root .sb-log-pending { background: #FFF6D9; color: #7A5A00; }
