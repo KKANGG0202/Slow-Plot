@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Jua&family=Gowun+Dodum&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Jua&display=swap');
 
 /* Everything is scoped to the Slow Plot panel so ST themes are untouched. */
 #sb_root .sb-wrap {
@@ -440,8 +440,17 @@
 }
 #sb_root .sb-wrap .sb-stage-mood i { font-size: 10px; }
 #sb_root .sb-wrap .sb-num-badge { font-family: 'Jua', 'Noto Sans KR', sans-serif !important; }
-/* long text in a softer, lighter face; Jua stays for titles and buttons */
-#sb_root .sb-wrap .sb-stage-sum {
-    font-family: 'Gowun Dodum', 'Noto Sans KR', sans-serif !important;
-    font-size: 13px; line-height: 1.55; color: #5B4E7A;
+/* stage card layout: number, title and buttons share the top row,
+   the summary and tags get the full card width underneath */
+#sb_root .sb-stage:not(.edit) {
+    display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto;
+    align-items: center; column-gap: 8px; row-gap: 4px;
 }
+#sb_root .sb-stage:not(.edit) .sb-stage-text { display: contents; }
+#sb_root .sb-stage:not(.edit) .sb-move { grid-column: 1; grid-row: 1; flex-direction: row; gap: 0; }
+#sb_root .sb-stage:not(.edit) .sb-num-badge { grid-column: 2; grid-row: 1; }
+#sb_root .sb-stage:not(.edit) .sb-stage-title { grid-column: 3; grid-row: 1; line-height: 1.3; }
+#sb_root .sb-stage:not(.edit) .sb-stage-btns { grid-column: 4; grid-row: 1; flex-direction: row; gap: 4px; }
+#sb_root .sb-stage:not(.edit) .sb-stage-sum,
+#sb_root .sb-stage:not(.edit) .sb-stage-chats { grid-column: 1 / -1; padding: 0 2px; }
+#sb_root .sb-wrap .sb-stage-sum { line-height: 1.5; }
