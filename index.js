@@ -707,7 +707,12 @@ function parseJson(text) {
     let t = String(text).replace(/```(?:json)?/gi, '').trim();
     const first = t.search(/[[{]/);
     const last = Math.max(t.lastIndexOf('}'), t.lastIndexOf(']'));
-    if (first < 0 || last < first) {
+    const cut = 'AI 답이 중간에 끊겼거나 형식이 깨졌어요. 다시 눌러 보거나, 너무 길면 단계 수를 줄여 보세요';
+    if (first >= 0 && last < first) {
+        console.warn('[Slow Plot] cut-off reply:', text);
+        throw replyError(cut);
+    }
+    if (first < 0) {
         console.warn('[Slow Plot] non-JSON reply:', text);
         throw replyError(`AI가 형식 대신 일반 문장으로 답했어요. 보통 모델이 내용을 거절(검열)한 경우예요. 답 앞부분: "${snippet(text)}"`);
     }
@@ -715,7 +720,7 @@ function parseJson(text) {
         return JSON.parse(t.slice(first, last + 1));
     } catch {
         console.warn('[Slow Plot] broken JSON reply:', text);
-        throw replyError('AI 답이 중간에 끊겼거나 형식이 깨졌어요. 다시 눌러 보거나, 너무 길면 단계 수를 줄여 보세요');
+        throw replyError(cut);
     }
 }
 
