@@ -16,6 +16,7 @@ const defaultSettings = Object.freeze({
     depth: 4,            // injection depth in chat
     role: 'system',
     judgeWindow: 20,     // how many recent messages the judge reads
+    stageToast: true,    // toast when the story moves to another stage on its own
     profileId: '',       // connection profile for planning/judging; '' = current connection
     prompts: {},         // user overrides of DEFAULT_PROMPTS, keyed by prompt id
 });
@@ -1006,11 +1007,11 @@ function advance(arc, manual = false) {
         arc.stageStarts.length = arc.current + 1;
         arc.lastJudge = progress(arc);
         pushLog(arc, true, `${arc.current + 1}단계 「${arc.stages[arc.current].title_ko}」 시작${manual ? ' (직접 넘김)' : ''}`);
-        toastr.success(`${arc.current + 1}단계로 넘어갔어요!`, 'Slow Plot');
+        if (manual || getSettings().stageToast !== false) toastr.success(`${arc.current + 1}단계로 넘어갔어요!`, 'Slow Plot');
     } else {
         arc.status = 'done';
         pushLog(arc, true, '모든 단계 완료! 🎉');
-        toastr.success('모든 단계를 완료했어요!', 'Slow Plot');
+        if (manual || getSettings().stageToast !== false) toastr.success('모든 단계를 완료했어요!', 'Slow Plot');
     }
 }
 
@@ -1074,13 +1075,13 @@ async function maybeJudge(force = false) {
             toastr.info('판정 중에 채팅방이 바뀌어서 결과를 버렸어요', 'Slow Plot');
             return;
         }
-        if (res.inner) { arc.inner = { ...res.inner, at: progress(arc) }; innerShown = false; }
+        if (res.inner) arc.inner = { ...res.inner, at: progress(arc), seen: false };
         const tooEarly = res.done && ripeness(arc) < judgeGate(arc);
         if (res.regress && !res.done) {
             pushLog(arc, false, '뒤로 밀려났어요 — ' + res.reason, res.detail);
             goBack(arc);
             arc.stageStarts[arc.current] = progress(arc);   // the earlier chapter has to be earned again
-            toastr.warning(`깡통 마음이 닫혔어요… ${arc.current + 1}단계로 돌아갔어요`, 'Slow Plot');
+            if (getSettings().stageToast !== false) toastr.warning(`깡통 마음이 닫혔어요… ${arc.current + 1}단계로 돌아갔어요`, 'Slow Plot');
         } else {
             pushLog(arc, res.done && !tooEarly, (res.done ? (tooEarly ? '이뤄졌지만 아직 이르니 조금 더 머물게요 — ' : '완료! ') : '아직이에요 — ') + res.reason, res.detail);
             if (res.done && !tooEarly) advance(arc);
@@ -1526,7 +1527,6 @@ function renderProgress(arc) {
     ${controls}`;
 }
 
-let innerShown = false;
 
 function renderInner(arc) {
     if (!arc.setup.innerHint || arc.status === 'draft' || arc.status === 'setup') return '';
@@ -1542,8 +1542,8 @@ function renderInner(arc) {
         </div>
         ${Number.isFinite(w) ? `<div class="sb-meter" role="img" aria-label="마음 온도 ${w}"><span style="width:${w}%"></span></div>` : ''}
         ${inner
-            ? `<button type="button" class="sb-inner-text ${innerShown ? '' : 'sb-blur'}" data-act="innerReveal" aria-label="속마음 보기">“${esc(inner.text)}”</button>
-               ${innerShown ? '' : '<p class="sb-sub sb-center">스포일러 방지! 눌러서 보기</p>'}
+            ? `<button type="button" class="sb-inner-text ${inner.seen ? '' : 'sb-blur'}" data-act="innerReveal" aria-label="속마음 보기">“${esc(inner.text)}”</button>
+               ${inner.seen ? '' : '<p class="sb-sub sb-center sb-inner-new">💌 새 속마음이 왔어요! 스포일러 방지, 눌러서 보기</p>'}
                <p class="sb-sub sb-center">${inner.at}챗째에 엿본 마음</p>`
             : '<p class="sb-sub sb-center">아직 몰라요. 판정할 때 같이 알아내거나, 지금 엿볼 수 있어요</p>'}
         <button type="button" class="sb-btn sb-small" data-act="innerPeek" ${busy ? 'disabled' : ''}>
@@ -1578,6 +1578,10 @@ function renderAdvanced() {
         <label class="sb-switch-line">
             <span><b>Slow Plot 켜기</b><span class="sb-sub sb-block">끄면 단계 지시도 판정도 멈춰요. 만든 과정은 그대로 남아요</span></span>
             <span class="sb-switch"><input id="sb_enabled" type="checkbox" ${s.enabled ? 'checked' : ''}><span class="sb-track"><span class="sb-knob"></span></span></span>
+        </label>
+        <label class="sb-switch-line">
+            <span><b>단계 넘어갈 때 알림 띄우기</b><span class="sb-sub sb-block">끄면 저절로 넘어갈 때 화면 위 알림이 안 떠요. 판정 기록에는 그대로 남아요</span></span>
+            <span class="sb-switch"><input id="sb_stage_toast" type="checkbox" ${s.stageToast !== false ? 'checked' : ''}><span class="sb-track"><span class="sb-knob"></span></span></span>
         </label>
         <label class="sb-sub sb-block">과정 만들기 · 판정에 쓸 API
             <select class="sb-input sb-wide" data-setting="profileId">
@@ -1661,7 +1665,6 @@ function importPrompts(text) {
 // ---------- quick panel (opened from the wand menu) ----------
 
 let quickOpen = false;
-let quickInnerShown = false;
 
 function addWandButton() {
     const menu = document.getElementById('extensionsMenu');
@@ -1688,7 +1691,6 @@ function openQuick() {
         quickEl.id = 'sb_quick';
         quickEl.addEventListener('click', onQuickClick);
         quickOpen = true;
-        quickInnerShown = false;
         renderQuick();
         quickPopup = new c.Popup(quickEl, c.POPUP_TYPE.TEXT, '', { okButton: '닫기' });
         try {
@@ -1733,7 +1735,7 @@ function renderQuick() {
         if (arc.eventPending) flags.push('🎲 돌발 대기');
         if (judging) flags.push('판정하는 중…');
         const inner = arc.setup.innerHint && arc.inner ? `
-            <button type="button" class="sbq-inner ${quickInnerShown ? '' : 'sb-blur'}" data-quick="inner">💭 “${esc(arc.inner.text)}”${Number.isFinite(arc.inner.warmth) ? ` · ${arc.inner.warmth}°` : ''}</button>` : '';
+            <button type="button" class="sbq-inner ${arc.inner.seen ? '' : 'sb-blur'}" data-quick="inner">${arc.inner.seen ? '💭' : '💌'} “${esc(arc.inner.text)}”${Number.isFinite(arc.inner.warmth) ? ` · ${arc.inner.warmth}°` : ''}</button>` : '';
         body = `
             <div class="sbq-stage">${arc.current + 1}/${arc.stages.length} · ${esc(st?.title_ko || '')}</div>
             <div class="sbq-meta">${esc(state)} · ${p}/${arc.setup.length}챗</div>
@@ -1766,7 +1768,7 @@ function onQuickClick(e) {
     const arc = hasChat() ? getArc() : null;
     if (!arc) return;
     switch (act) {
-        case 'inner': quickInnerShown = !quickInnerShown; break;
+        case 'inner': if (arc.inner) arc.inner.seen = true; break;
         case 'nudge': arc.nudgePending = !arc.nudgePending; break;
         case 'event': arc.eventPending = !arc.eventPending; break;
         case 'hold': toggleHold(arc); break;
@@ -1924,12 +1926,11 @@ async function onClick(e) {
             arc.eventPending = !arc.eventPending;
             if (arc.eventPending) toastr.info('🎲 다음 답변에 돌발 사건이 생겨요!', 'Slow Plot');
             break;
-        case 'innerReveal': innerShown = !innerShown; break;
+        case 'innerReveal': if (arc.inner) arc.inner.seen = true; break;
         case 'innerPeek': {
             busy = 'inner'; render();
             try {
-                arc.inner = { ...(await peekInner(arc)), at: progress(arc) };
-                innerShown = false;
+                arc.inner = { ...(await peekInner(arc)), at: progress(arc), seen: true };   // asked for it, so show it
             } catch (err) {
                 console.error(LOG, err);
                 toastr.error('엿보기 실패: ' + err.message, 'Slow Plot');
@@ -2127,6 +2128,10 @@ async function onClick(e) {
 function onInput(e) {
     const el = e.target;
     if (el.id === 'sb_enabled') { if (e.type === 'change') setEnabled(el.checked); return; }
+    if (el.id === 'sb_stage_toast') {
+        if (e.type === 'change') { getSettings().stageToast = el.checked; ctx().saveSettingsDebounced(); }
+        return;
+    }
     const arc = hasChat() ? getArc() : null;
     if (el.dataset.bind && arc) {
         const k = el.dataset.bind;

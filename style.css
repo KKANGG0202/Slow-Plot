@@ -478,3 +478,4 @@
 #sb_root .sb-wi-books:empty { display: none; }
 #sb_root .sb-wi-book { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #sb_root .sb-wi-book b { margin-left: 2px; font-weight: normal; opacity: .85; }
+#sb_root .sb-inner-new { color: var(--sb-pink-dark); }
