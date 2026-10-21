@@ -818,13 +818,17 @@ const SUMMARY_SOURCES = {
     'scenario-summarizer': '시나리오 자동요약',
     '1_memory': '실리 기본 요약',
     'memoria_ledger': 'Memoria',
+    'long_memory_main': '코끼리를 생각하지마',
+    'long_memory_anchor': '코끼리 (현재 상태)',
 };
+// Per-turn recall snippets: about the last reply only, not the story so far.
+const SUMMARY_SKIP = new Set(['long_memory_recall']);
 
 function findSummaries() {
     const prompts = ctx().extensionPrompts || {};
     const out = [];
     for (const [key, p] of Object.entries(prompts)) {
-        if (key === MODULE) continue;
+        if (key === MODULE || SUMMARY_SKIP.has(key)) continue;
         const known = SUMMARY_SOURCES[key];
         if (!known && !/summar|memor|요약/i.test(key)) continue;
         const text = String(p?.value ?? '').trim();
@@ -835,7 +839,7 @@ function findSummaries() {
 
 function summaryNote() {
     const found = findSummaries();
-    if (!found.length) return '지금 들어가 있는 요약이 없어요. 요약 확장(시나리오 자동요약, 실리 기본 요약 등)이 요약을 넣고 있으면 자동으로 찾아서 읽어요';
+    if (!found.length) return '지금 들어가 있는 요약이 없어요. 요약 확장(시나리오 자동요약, 코끼리를 생각하지마, Memoria, 실리 기본 요약 등)이 요약을 넣고 있으면 자동으로 찾아서 읽어요';
     return `찾은 요약: ${found.map(f => `${esc(f.label)} (${f.text.length.toLocaleString()}자)`).join(', ')} · 과정 만들기와 아이디어 추천에 같이 반영돼요`;
 }
 
