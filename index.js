@@ -1704,7 +1704,7 @@ let activeTab = 'plot';   // plot | progress | settings
 
 function renderTabs(arc) {
     const tabs = [['plot', '📝 줄거리'], ['progress', '🐌 진행'], ['settings', '⚙️ 설정']];
-    return `<div class="sb-tabs" role="tablist">${tabs.map(([k, l]) => `<button type="button" role="tab" class="sb-tab${activeTab === k ? ' on' : ''}" aria-selected="${activeTab === k}" data-act="tab" data-value="${k}">${l}${k === 'progress' && arc && arc.stages.length ? ` <span class="sb-tab-badge">${arc.status === 'draft' ? '새' : `${arc.current + 1}/${arc.stages.length}`}</span>` : ''}</button>`).join('')}</div>`;
+    return `<div class="sb-tabs" role="tablist">${tabs.map(([k, l]) => `<button type="button" role="tab" class="sb-tab${activeTab === k ? ' on' : ''}" aria-selected="${activeTab === k}" data-act="tab" data-value="${k}">${l}${k === 'progress' && arc && arc.stages.length ? ` <span class="sb-tab-badge">${arc.status === 'draft' ? '시작 전' : `${arc.current + 1}/${arc.stages.length}`}</span>` : ''}</button>`).join('')}</div>`;
 }
 
 function render() {
