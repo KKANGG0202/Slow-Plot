@@ -1391,8 +1391,13 @@ function moveStage(arc, from, dir) {
 // Stages the user tapped to peek at while hiding is on (this session only).
 const peeked = new Set();
 
+// The settings switch is the default; the chip in the progress tab overrides it for this chat only.
+function hidingOn(arc) {
+    return typeof arc?.hideStages === 'boolean' ? arc.hideStages : !!getSettings().hideStages;
+}
+
 function stageHidden(arc, i) {
-    if (!getSettings().hideStages || peeked.has(i)) return false;
+    if (!hidingOn(arc) || peeked.has(i)) return false;
     const done = arc.status === 'done' || (arc.status !== 'draft' && i < arc.current);
     return !done;
 }
@@ -1458,7 +1463,7 @@ function renderStage(arc, st, i) {
             <div class="sb-stage-title">${hidden ? '🔒 ???' : esc(st.title_ko || '(제목 없음)')}</div>
             ${hidden
                 ? `<button type="button" class="sb-stage-sum sb-peek" data-act="peekStage" data-value="${i}">스포일러 방지로 가려져 있어요 · 눌러서 잠깐 보기</button>`
-                : `<div class="sb-stage-sum">${isDone && !isCur ? '완료!' : esc(st.summary_ko)}${getSettings().hideStages && peeked.has(i) && !isDone ? ` <button type="button" class="sb-rehide" data-act="peekStage" data-value="${i}">다시 가리기</button>` : ''}</div>`}
+                : `<div class="sb-stage-sum">${isDone && !isCur ? '완료!' : esc(st.summary_ko)}${hidingOn(arc) && peeked.has(i) && !isDone ? ` <button type="button" class="sb-rehide" data-act="peekStage" data-value="${i}">다시 가리기</button>` : ''}</div>`}
             ${budgets[i] != null || st.mood_ko || st.lead ? `<div class="sb-stage-chats">${st.lead && !hidden ? `<span class="sb-stage-mood sb-stage-lead"><i class="fa-solid fa-user"></i> ${esc(st.lead)}</span>` : ''}${st.mood_ko && !hidden ? `<span class="sb-stage-mood">${esc(st.mood_ko)}</span>` : ''}${budgets[i] != null ? `${isFixed(st) ? '<i class="fa-solid fa-thumbtack"></i> ' : '약 '}${budgets[i]}챗` : ''}</div>` : ''}
         </div>
         <div class="sb-stage-btns">
@@ -1542,7 +1547,7 @@ function renderProgress(arc) {
         </div>
         <div class="sb-hearts">${hearts}</div>
         <div class="sb-status">${status}</div>
-        <div class="sb-hide-row"><button type="button" class="sb-chip${s.hideStages ? ' on' : ''}" data-act="toggleHide">${s.hideStages ? '🙈 단계 가리는 중' : '👀 단계 다 보이는 중'}</button></div>
+        <div class="sb-hide-row"><button type="button" class="sb-chip${hidingOn(arc) ? ' on' : ''}" data-act="toggleHide">${hidingOn(arc) ? '🙈 이 방은 단계 가리는 중' : '👀 이 방은 단계 다 보이는 중'}</button></div>
         ${renderInner(arc)}
         <div class="sb-stages">${arc.stages.map((st, i) => renderStage(arc, st, i)).join('')}</div>
         <div class="sb-ctrl two">
@@ -1610,7 +1615,7 @@ function renderAdvanced() {
             <span class="sb-switch"><input id="sb_stage_toast" type="checkbox" ${s.stageToast !== false ? 'checked' : ''}><span class="sb-track"><span class="sb-knob"></span></span></span>
         </label>
         <label class="sb-switch-line">
-            <span><b>단계 가리기 (스포 방지)</b><span class="sb-sub sb-block">아직 안 끝난 단계는 제목·내용을 가려요. 눌러서 잠깐 볼 수 있어요</span></span>
+            <span><b>단계 가리기 기본값 (스포 방지)</b><span class="sb-sub sb-block">아직 안 끝난 단계는 제목·내용을 가려요. 진행 탭의 👀/🙈 칩으로 채팅방마다 따로 바꿀 수 있어요</span></span>
             <span class="sb-switch"><input id="sb_hide_stages" type="checkbox" ${s.hideStages ? 'checked' : ''}><span class="sb-track"><span class="sb-knob"></span></span></span>
         </label>
         <label class="sb-sub sb-block">과정 만들기 · 판정에 쓸 API
@@ -1896,7 +1901,16 @@ async function onClick(e) {
     const act = btn.dataset.act;
     const val = btn.dataset.value;
     if (act === 'tab') { activeTab = val; render(); return; }
-    if (act === 'toggleHide') { setHideStages(!getSettings().hideStages); return; }
+    if (act === 'toggleHide') {
+        const arc = getArc();
+        const next = !hidingOn(arc);
+        // Matching the default again means "follow the default" for this chat.
+        arc.hideStages = next === !!getSettings().hideStages ? undefined : next;
+        peeked.clear();
+        save();
+        render();
+        return;
+    }
     if (act === 'peekStage') { const k = Number(val); if (peeked.has(k)) peeked.delete(k); else peeked.add(k); render(); return; }
     if (act === 'enableOn') { setEnabled(true); return; }
     if (act === 'wiToggle') { wiOpen = !wiOpen; render(); return; }
