@@ -649,8 +649,24 @@ function allBooks() {
     try { return ctx().getWorldInfoNames(); } catch { return []; }
 }
 
-async function ensureBook(name) {
-    if (!name || wiCache.has(name)) return;
+const wiLoading = new Map();   // bookName -> pending load
+
+function ensureBook(name) {
+    if (!name) return Promise.resolve();
+    if (wiLoading.has(name)) return wiLoading.get(name);
+    if (wiCache.has(name) && wiCache.get(name) !== null) return Promise.resolve();
+    const job = loadBook(name).finally(() => wiLoading.delete(name));
+    wiLoading.set(name, job);
+    return job;
+}
+
+// Every book with picked entries must be loaded before its text is used
+// (after a page reload only the book on screen is in the cache).
+async function loadPickedBooks(arc) {
+    await Promise.all(Object.keys(arc.setup.wi).map(b => ensureBook(b)));
+}
+
+async function loadBook(name) {
     wiCache.set(name, null);
     try {
         const data = await ctx().loadWorldInfo(name);
@@ -683,6 +699,33 @@ function selectedWiText(arc) {
         }
     }
     return parts.join('\n');
+}
+
+// Names of the picked entries, book by book (books still loading are fetched in the background).
+function pickedWiLabels(arc) {
+    const out = [];
+    for (const [book, uids] of Object.entries(arc.setup.wi)) {
+        const entries = wiCache.get(book);
+        if (!entries) { ensureBook(book); continue; }
+        for (const e of entries) if (uids.includes(e.uid)) out.push(e.label);
+    }
+    return out;
+}
+
+function wiPickedHtml(arc) {
+    const n = wiCount(arc);
+    if (!n) return '';
+    const labels = pickedWiLabels(arc);
+    const shown = labels.slice(0, 8).join(', ');
+    const rest = n - Math.min(labels.length, 8);
+    return `고른 항목: ${esc(shown || '불러오는 중…')}${rest > 0 ? ` 외 ${rest}개` : ''}`;
+}
+
+function wiBookChipsHtml(arc) {
+    const s = arc.setup;
+    const books = Object.keys(s.wi);
+    if (!books.length) return '';
+    return books.map(b => `<button type="button" class="sb-chip sb-wi-book ${b === s.wiBook ? 'on' : ''}" data-act="wiBookOpen" data-value="${esc(b)}"><i class="fa-solid fa-book"></i> ${esc(b)} <b>${s.wi[b].length}</b></button>`).join('');
 }
 
 function wiCount(arc) {
@@ -767,7 +810,7 @@ async function generateStages(arc) {
     const su = arc.setup;
     const charDesc = su.useChar ? clip(c.substituteParams('{{description}}\n{{personality}}'), 2000) : '';
     const persona = su.usePersona ? clip(c.substituteParams('{{persona}}'), 1000) : '';
-    await Promise.all(Object.keys(su.wi).map(ensureBook));
+    await loadPickedBooks(arc);
     const lore = selectedWiText(arc);
     const count = arc.setup.stageCount === 'auto'
         ? 'Choose between 3 and 8, based on the total length and how much story there is.'
@@ -851,7 +894,7 @@ async function suggestIdeas(arc, count, avoid = [], variationOf = null) {
     const su = arc.setup;
     const charDesc = su.useChar ? clip(c.substituteParams('{{description}}\n{{personality}}'), 2000) : '';
     const persona = su.usePersona ? clip(c.substituteParams('{{persona}}'), 1000) : '';
-    await Promise.all(Object.keys(su.wi).map(ensureBook));
+    await loadPickedBooks(arc);
     const lore = selectedWiText(arc);
     const recent = su.ideaUseChat
         ? c.chat.filter(m => !m.is_system).slice(-Number(su.chatCount || 30)).map(m => `${m.name}: ${clip(m.mes, 400)}`).join('\n')
@@ -1309,12 +1352,14 @@ function renderRefs(arc) {
         </div>` : ''}
         <div class="sb-wi">
             <button type="button" class="sb-fold-head" data-act="wiToggle" aria-expanded="${wiOpen}"><i class="fa-solid ${wiOpen ? 'fa-caret-down' : 'fa-caret-right'}"></i> 월드인포 고르기 <span class="sb-sub sb-wi-count">(${wiCount(arc)}개 선택됨)</span></button>
+            <p class="sb-sub sb-wi-picked">${wiPickedHtml(arc)}</p>
             ${!wiOpen ? '' : books.length ? `
+            <div class="sb-chips sb-wi-books">${wiBookChipsHtml(arc)}</div>
             <select class="sb-input" data-wibook>
-                <option value="">로어북 고르기</option>
+                <option value="">${Object.keys(s.wi).length ? '+ 다른 로어북 열기' : '로어북 고르기'}</option>
                 ${books.map(b => `<option value="${esc(b)}" ${b === s.wiBook ? 'selected' : ''}>${linked.includes(b) ? '★ ' : ''}${esc(b)}${s.wi[b]?.length ? ` (${s.wi[b].length})` : ''}</option>`).join('')}
             </select>
-            <p class="sb-sub">★ 표시는 이 캐릭터나 채팅에 연결된 로어북이에요</p>
+            <p class="sb-sub">★ 표시는 이 캐릭터나 채팅에 연결된 로어북이에요. 로어북을 바꿔 가며 여러 개에서 골라도 다 같이 들어가요</p>
             ${entriesHtml}` : '<p class="sb-sub">로어북이 없어요</p>'}
         </div>
     </div>`;
@@ -1804,6 +1849,14 @@ async function onClick(e) {
     const val = btn.dataset.value;
     if (act === 'tab') { activeTab = val; render(); return; }
     if (act === 'wiToggle') { wiOpen = !wiOpen; render(); return; }
+    if (act === 'wiBookOpen') {
+        const arc = getArc();
+        arc.setup.wiBook = val;
+        save();
+        ensureBook(val);
+        render();
+        return;
+    }
     if (act === 'moreToggle') { moreOpen = !moreOpen; render(); return; }
     if (act === 'advMoreToggle') { advMoreOpen = !advMoreOpen; render(); return; }
     if (act === 'ideaToggle') { ideaOpen = !ideaOpen; render(); return; }
@@ -2083,6 +2136,10 @@ function onInput(e) {
         save();
         const counter = document.querySelector('#sb_root .sb-wi-count');
         if (counter) counter.textContent = `(${wiCount(arc)}개 선택됨)`;
+        const picked = document.querySelector('#sb_root .sb-wi-picked');
+        if (picked) picked.innerHTML = wiPickedHtml(arc);
+        const chips = document.querySelector('#sb_root .sb-wi-books');
+        if (chips) chips.innerHTML = wiBookChipsHtml(arc);
         return;
     }
     if (arc && el.dataset.wibook !== undefined && e.type === 'change') {

@@ -473,3 +473,10 @@
 #sb_root .sb-chatcount { display: flex; flex-direction: column; gap: 4px; }
 #sb_root .sb-chatcount .sb-inline { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--sb-ink); }
 #sb_root .sb-chatcount .sb-inline .sb-input { width: 80px; min-height: 34px; margin: 0; }
+
+/* world info: picked names + one chip per book that has picks */
+#sb_root .sb-wi-picked { margin: 2px 0 0; line-height: 1.45; word-break: keep-all; overflow-wrap: anywhere; }
+#sb_root .sb-wi-picked:empty { display: none; }
+#sb_root .sb-wi-books:empty { display: none; }
+#sb_root .sb-wi-book { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#sb_root .sb-wi-book b { margin-left: 2px; font-weight: normal; opacity: .85; }
