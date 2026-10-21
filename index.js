@@ -1060,6 +1060,21 @@ async function maybeJudge(force = false) {
 let busy = '';            // '', 'generate', 'translate'
 let editing = -1;
 let wiOpen = false;
+let moreOpen = false;   // "더 세밀하게" fold on the plot tab
+let advMoreOpen = false;   // "고급" fold on the settings tab
+
+// What is switched on inside the folded section, so it is visible while folded.
+function moreSummary(arc) {
+    const s = arc.setup;
+    const bits = [];
+    if ((s.difficulty || 'normal') !== 'normal') bits.push(diff(arc).label);
+    const opts = [['obstacles', '방해꾼'], ['innerHint', '속마음'], ['foreshadow', '복선'], ['breather', '숨 고르기'], ['autoEvent', '돌발']]
+        .filter(([k]) => s[k]).map(([, l]) => l);
+    if (opts.length) bits.push(opts.join('·'));
+    const cast = String(s.castExtra || '').split(/[,，、]/).map(x => x.trim()).filter(Boolean).length;
+    if (cast) bits.push(`등장인물 ${cast}명`);
+    return bits.length ? `(${esc(bits.join(' · '))})` : '(난이도 · 추가 옵션 · 등장인물)';
+}
 let ideaOpen = false;
 
 function esc(s) {
@@ -1107,14 +1122,31 @@ function renderSetup(arc) {
             <p class="sb-label">분위기 <span class="sb-sub">(여러 개 OK, 안 골라도 돼요)</span></p>
             <div class="sb-chips">${moodChips}</div>
             ${s.moodCustomOn ? `<input class="sb-input" data-bind="moodCustom" placeholder="원하는 분위기를 써주세요" value="${esc(s.moodCustom)}">` : ''}
-            <label class="sb-sub sb-block">꼭 지켜줬으면 하는 것
-                <textarea class="sb-input sb-textarea" data-bind="memo" placeholder="예: 연애 없이 끝까지 앙숙 겸 동업자 사이로만">${esc(s.memo)}</textarea>
+        </div>
+        <div class="sb-field">
+            <label class="sb-label sb-block">꼭 지켜줬으면 하는 것 <span class="sb-sub">(안 써도 돼요)</span>
+                <textarea class="sb-input sb-textarea" data-bind="memo" placeholder="예: 깡캐가 실수를 해도 깡통은 절대 깡캐 탓을 하지 않음">${esc(s.memo)}</textarea>
             </label>
         </div>
         <div class="sb-field">
+            <p class="sb-label">몇 챗 동안? <span class="sb-sub">(봇 답변 기준. 내 메시지는 안 세요)</span></p>
+            <div class="sb-chips">${lenChips}</div>
+            ${s.lengthCustom ? `<input class="sb-input sb-num" type="number" min="5" step="5" data-bind="length" value="${esc(s.length)}">` : ''}
+        </div>
+        <div class="sb-field">
+            <p class="sb-label">몇 단계로?</p>
+            <div class="sb-chips">${stageChips}</div>
+            ${s.stageCustom ? `<label class="sb-sub sb-block">단계 수 (2~15)<input class="sb-input sb-num" type="number" min="2" max="15" data-bind="stageCount" value="${esc(s.stageCount === 'auto' ? 10 : s.stageCount)}"></label>` : ''}
+            ${s.stageCount !== 'auto' ? `<p class="sb-sub">평균 단계당 약 ${Math.round(Number(s.length) / Number(s.stageCount))}챗. 내용에 따라 AI가 길고 짧게 나눠줘요</p>` : ''}
+        </div>
+        ${renderRefs(arc)}
+        <div class="sb-more">
+            <button type="button" class="sb-fold-head" data-act="moreToggle" aria-expanded="${moreOpen}"><i class="fa-solid ${moreOpen ? 'fa-caret-down' : 'fa-caret-right'}"></i> 더 세밀하게 <span class="sb-sub">${moreSummary(arc)}</span></button>
+            ${moreOpen ? `<div class="sb-more-body">
+        <div class="sb-field">
             <p class="sb-label">깡통 난이도 <span class="sb-sub">(진행 중에도 바꿀 수 있어요)</span></p>
             <div class="sb-chips">${Object.entries(DIFFICULTY).map(([k, d]) => chip(d.label, (s.difficulty || 'normal') === k, 'difficulty', k)).join('')}</div>
-            <p class="sb-sub">${esc(diff(arc).hint)}</p>
+            ${(s.difficulty || 'normal') === 'normal' ? '' : `<p class="sb-sub">${esc(diff(arc).hint)}</p>`}
         </div>
         <div class="sb-field">
             <p class="sb-label">추가 옵션</p>
@@ -1136,18 +1168,9 @@ function renderSetup(arc) {
             </label>` : ''}
             ${s.autoEvent ? '<p class="sb-sub">가끔(약 8답변에 한 번) 작은 돌발 사건이 저절로 생겨요. 진행 패널의 🎲 버튼으로 직접 굴릴 수도 있어요</p>' : ''}
         </div>
-        <div class="sb-field">
-            <p class="sb-label">몇 챗 동안? <span class="sb-sub">(봇 답변 기준. 내 메시지는 안 세요)</span></p>
-            <div class="sb-chips">${lenChips}</div>
-            ${s.lengthCustom ? `<input class="sb-input sb-num" type="number" min="5" step="5" data-bind="length" value="${esc(s.length)}">` : ''}
+        ${renderCast(arc)}
+            </div>` : ''}
         </div>
-        <div class="sb-field">
-            <p class="sb-label">몇 단계로?</p>
-            <div class="sb-chips">${stageChips}</div>
-            ${s.stageCustom ? `<label class="sb-sub sb-block">단계 수 (2~15)<input class="sb-input sb-num" type="number" min="2" max="15" data-bind="stageCount" value="${esc(s.stageCount === 'auto' ? 10 : s.stageCount)}"></label>` : ''}
-            ${s.stageCount !== 'auto' ? `<p class="sb-sub">평균 단계당 약 ${Math.round(Number(s.length) / Number(s.stageCount))}챗. 내용에 따라 AI가 길고 짧게 나눠줘요</p>` : ''}
-        </div>
-        ${renderRefs(arc)}
         <button type="button" class="sb-btn sb-primary" data-act="generate" ${busy ? 'disabled' : ''}>
             ${busy === 'generate' ? '<i class="fa-solid fa-spinner fa-spin"></i> 만드는 중…' : (hasStages ? '과정 다시 만들기' : '과정 만들기 ✦')}
         </button>
@@ -1230,6 +1253,17 @@ function renderIdeaMore(arc) {
     </div>`;
 }
 
+function renderCast(arc) {
+    const s = arc.setup;
+    return `
+    <div class="sb-field">
+        <p class="sb-label">등장인물 <span class="sb-sub">(다인봇이면 이름을 쉼표로 써주세요)</span></p>
+        <input class="sb-input" data-bind="castExtra" placeholder="예: 하루, 유키, 렌 (1인봇이면 비워도 돼요)" value="${esc(s.castExtra)}">
+        ${wiCount(arc) ? '<button type="button" class="sb-btn sb-small sb-cast-wi" data-act="castFromWi"><i class="fa-solid fa-book"></i> 체크한 월드인포 항목 이름 불러오기</button>' : ''}
+        <p class="sb-sub">과정 만들 때 이 사람들한테 골고루 이야기를 나눠주고, 단계별 "이끄는 인물" 칩으로도 떠요</p>
+    </div>`;
+}
+
 function renderRefs(arc) {
     const c = ctx();
     const s = arc.setup;
@@ -1261,21 +1295,18 @@ function renderRefs(arc) {
     }
     return `
     <div class="sb-field">
-        <p class="sb-label">등장인물 <span class="sb-sub">(다인봇이면 이름을 쉼표로 써주세요)</span></p>
-        <input class="sb-input" data-bind="castExtra" placeholder="예: 하루, 유키, 렌 (1인봇이면 비워도 돼요)" value="${esc(s.castExtra)}">
-        ${wiCount(arc) ? '<button type="button" class="sb-btn sb-small sb-cast-wi" data-act="castFromWi"><i class="fa-solid fa-book"></i> 체크한 월드인포 항목 이름 불러오기</button>' : ''}
-        <p class="sb-sub">과정 만들 때 이 사람들한테 골고루 이야기를 나눠주고, 단계별 "이끄는 인물" 칩으로도 떠요</p>
-    </div>
-    <div class="sb-field">
         <p class="sb-label">참고할 자료 <span class="sb-sub">(과정 만들 때 AI가 읽어요)</span></p>
         <div class="sb-chips">
             ${chip(`${c.name2} 캐릭터 설정`, s.useChar, 'useChar', '1')}
             ${chip(`${c.name1} 페르소나`, s.usePersona, 'usePersona', '1')}
             ${chip('최근 대화 반영', s.planUseChat, 'planUseChat', '1')}
         </div>
-        ${s.planUseChat || s.ideaUseChat ? `<label class="sb-sub sb-block sb-chatcount">최근 메시지 몇 개까지 읽을까요? <span>(내 메시지 + 봇 답변, 1~100, 아이디어 추천에도 같이 써요)</span>
-            <input class="sb-input sb-num" type="number" min="1" max="100" data-bind="chatCount" value="${esc(s.chatCount)}">
-        </label>` : ''}
+        ${s.planUseChat || s.ideaUseChat ? `<div class="sb-chatcount">
+            <label class="sb-inline">최근 메시지 몇 개 읽을까?
+                <input class="sb-input sb-num" type="number" min="1" max="100" data-bind="chatCount" value="${esc(s.chatCount)}">
+            </label>
+            <span class="sb-sub">1~100 · 내 메시지 포함 · 아이디어 추천에도 써요</span>
+        </div>` : ''}
         <div class="sb-wi">
             <button type="button" class="sb-fold-head" data-act="wiToggle" aria-expanded="${wiOpen}"><i class="fa-solid ${wiOpen ? 'fa-caret-down' : 'fa-caret-right'}"></i> 월드인포 고르기 <span class="sb-sub sb-wi-count">(${wiCount(arc)}개 선택됨)</span></button>
             ${!wiOpen ? '' : books.length ? `
@@ -1515,6 +1546,10 @@ function renderAdvanced() {
         <label class="sb-sub sb-block">판정할 때 읽는 최근 메시지 수
             <input class="sb-input sb-num" type="number" min="4" max="60" data-setting="judgeWindow" value="${s.judgeWindow}">
         </label>
+        ${renderPromptEditor()}
+        <div class="sb-more">
+            <button type="button" class="sb-fold-head" data-act="advMoreToggle" aria-expanded="${advMoreOpen}"><i class="fa-solid ${advMoreOpen ? 'fa-caret-down' : 'fa-caret-right'}"></i> 고급 <span class="sb-sub">(끼워 넣는 깊이 · 역할)</span></button>
+            ${advMoreOpen ? `<div class="sb-more-body">
         <label class="sb-sub sb-block">끼워 넣는 깊이 (클수록 은근함)
             <input class="sb-input sb-num" type="number" min="0" max="30" data-setting="depth" value="${s.depth}">
         </label>
@@ -1523,7 +1558,8 @@ function renderAdvanced() {
                 ${['system', 'user', 'assistant'].map(r => `<option value="${r}" ${s.role === r ? 'selected' : ''}>${r}</option>`).join('')}
             </select>
         </label>
-        ${renderPromptEditor()}
+            </div>` : ''}
+        </div>
         <button type="button" class="sb-btn sb-danger" data-act="reset">이 채팅의 과정 지우기</button>
         ` : ''}
     </div>`;
@@ -1768,6 +1804,8 @@ async function onClick(e) {
     const val = btn.dataset.value;
     if (act === 'tab') { activeTab = val; render(); return; }
     if (act === 'wiToggle') { wiOpen = !wiOpen; render(); return; }
+    if (act === 'moreToggle') { moreOpen = !moreOpen; render(); return; }
+    if (act === 'advMoreToggle') { advMoreOpen = !advMoreOpen; render(); return; }
     if (act === 'ideaToggle') { ideaOpen = !ideaOpen; render(); return; }
     if (act === 'logToggle') { openLog = openLog === Number(val) ? -1 : Number(val); render(); return; }
     if (act === 'ideaMoreToggle') { ideaMoreOpen = !ideaMoreOpen; render(); return; }
@@ -2086,17 +2124,14 @@ function buildPanel() {
         <div class="inline-drawer">
             <div class="inline-drawer-toggle inline-drawer-header">
                 <b>${SNAIL_SVG.replace('sb-snail', 'sb-title-icon')} Slow Plot</b>
+                <label class="sb-switch sb-head-switch" title="Slow Plot 켜기/끄기"><span>ON</span>
+                    <input id="sb_enabled" type="checkbox">
+                    <span class="sb-track"><span class="sb-knob"></span></span>
+                </label>
                 <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
             </div>
             <div class="inline-drawer-content">
                 <div class="sb-wrap">
-                    <div class="sb-top">
-                        <div class="sb-brand"><span class="sb-logo">${SNAIL_SVG}</span>Slow Plot</div>
-                        <label class="sb-switch"><span>ON</span>
-                            <input id="sb_enabled" type="checkbox">
-                            <span class="sb-track"><span class="sb-knob"></span></span>
-                        </label>
-                    </div>
                     <div id="sb_body"></div>
                 </div>
             </div>
@@ -2107,6 +2142,8 @@ function buildPanel() {
     root.addEventListener('click', onClick);
     root.addEventListener('input', onInput);
     root.addEventListener('change', onInput);
+    // The switch sits in the drawer header: keep its clicks from opening/closing the drawer.
+    root.querySelector('.sb-head-switch').addEventListener('click', e => e.stopPropagation());
     document.getElementById('sb_enabled').addEventListener('change', e => {
         getSettings().enabled = e.target.checked;
         ctx().saveSettingsDebounced();
