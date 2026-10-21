@@ -455,14 +455,12 @@
 #sb_root .sb-stage:not(.edit) .sb-stage-chats { grid-column: 1 / -1; padding: 0 2px; }
 #sb_root .sb-wrap .sb-stage-sum { line-height: 1.5; }
 
-/* ON switch lives in the drawer header now (outside .sb-wrap, so it brings its own colors) */
-#sb_root .sb-head-switch {
-    --sb-line: #E3DBF7; --sb-mint: #8FE3C4; --sb-mint-dark: #5CC59F; --sb-purple: #7C5CFF;
-    margin-left: auto; margin-right: 8px; font-size: 11px; opacity: .9;
-}
-#sb_root .sb-head-switch .sb-track { width: 40px; height: 22px; }
-#sb_root .sb-head-switch .sb-knob { width: 16px; height: 16px; left: 3px; top: 2px; }
-#sb_root .sb-head-switch input:checked + .sb-track .sb-knob { left: 21px; }
+/* on/off: a row at the top of the settings tab, and a banner while off */
+#sb_root .sb-switch-line { display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer; padding-bottom: 12px; border-bottom: 2px dashed var(--sb-line); }
+#sb_root .sb-switch-line b { font-weight: normal; font-size: 15px; }
+#sb_root .sb-switch-line .sb-switch { flex: none; }
+#sb_root .sb-off { display: flex; align-items: center; justify-content: space-between; gap: 8px; background: #FFF4D6; color: #7A5A12; border-radius: 16px; padding: 8px 12px; font-size: 13px; }
+#sb_root .sb-off .sb-btn { flex: none; }
 
 /* folded sections ("더 세밀하게", "고급") */
 #sb_root .sb-more { background: var(--sb-bg); border-radius: 16px; padding: 4px 10px; }

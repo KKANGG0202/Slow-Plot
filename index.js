@@ -1575,6 +1575,10 @@ function renderAdvanced() {
     return `
     <div class="sb-card sb-adv">
         ${true ? `
+        <label class="sb-switch-line">
+            <span><b>Slow Plot 켜기</b><span class="sb-sub sb-block">끄면 단계 지시도 판정도 멈춰요. 만든 과정은 그대로 남아요</span></span>
+            <span class="sb-switch"><input id="sb_enabled" type="checkbox" ${s.enabled ? 'checked' : ''}><span class="sb-track"><span class="sb-knob"></span></span></span>
+        </label>
         <label class="sb-sub sb-block">과정 만들기 · 판정에 쓸 API
             <select class="sb-input sb-wide" data-setting="profileId">
                 <option value="">지금 채팅 연결 그대로</option>
@@ -1793,9 +1797,6 @@ function render() {
     const body = document.getElementById('sb_body');
     if (!body) return;
     const s = getSettings();
-    const toggle = document.getElementById('sb_enabled');
-    if (toggle) toggle.checked = s.enabled;
-
     if (!hasChat()) {
         body.innerHTML = '<div class="sb-card sb-center sb-sub">채팅을 열면 여기서 줄거리 과정을 만들 수 있어요</div>';
         return;
@@ -1811,7 +1812,15 @@ function render() {
     } else {
         content = renderSetup(arc);
     }
-    body.innerHTML = renderTabs(arc) + content;
+    const off = s.enabled ? '' : `<div class="sb-off"><span>지금 꺼져 있어요. 깡통한테 아무것도 안 들어가요</span><button type="button" class="sb-btn sb-small" data-act="enableOn">켜기</button></div>`;
+    body.innerHTML = off + renderTabs(arc) + content;
+}
+
+function setEnabled(on) {
+    getSettings().enabled = on;
+    ctx().saveSettingsDebounced();
+    updateInjection();
+    render();
 }
 
 async function onPromptAction(act) {
@@ -1848,6 +1857,7 @@ async function onClick(e) {
     const act = btn.dataset.act;
     const val = btn.dataset.value;
     if (act === 'tab') { activeTab = val; render(); return; }
+    if (act === 'enableOn') { setEnabled(true); return; }
     if (act === 'wiToggle') { wiOpen = !wiOpen; render(); return; }
     if (act === 'wiBookOpen') {
         const arc = getArc();
@@ -2116,6 +2126,7 @@ async function onClick(e) {
 
 function onInput(e) {
     const el = e.target;
+    if (el.id === 'sb_enabled') { if (e.type === 'change') setEnabled(el.checked); return; }
     const arc = hasChat() ? getArc() : null;
     if (el.dataset.bind && arc) {
         const k = el.dataset.bind;
@@ -2181,10 +2192,6 @@ function buildPanel() {
         <div class="inline-drawer">
             <div class="inline-drawer-toggle inline-drawer-header">
                 <b>${SNAIL_SVG.replace('sb-snail', 'sb-title-icon')} Slow Plot</b>
-                <label class="sb-switch sb-head-switch" title="Slow Plot 켜기/끄기"><span>ON</span>
-                    <input id="sb_enabled" type="checkbox">
-                    <span class="sb-track"><span class="sb-knob"></span></span>
-                </label>
                 <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
             </div>
             <div class="inline-drawer-content">
@@ -2199,13 +2206,6 @@ function buildPanel() {
     root.addEventListener('click', onClick);
     root.addEventListener('input', onInput);
     root.addEventListener('change', onInput);
-    // The switch sits in the drawer header: keep its clicks from opening/closing the drawer.
-    root.querySelector('.sb-head-switch').addEventListener('click', e => e.stopPropagation());
-    document.getElementById('sb_enabled').addEventListener('change', e => {
-        getSettings().enabled = e.target.checked;
-        ctx().saveSettingsDebounced();
-        updateInjection();
-    });
 }
 
 // Pink-shelled snail: the extension's mark ("slow").
