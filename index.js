@@ -62,6 +62,7 @@ function newArc() {
             ideaAvoid: '',
             ideaFocus: 'both',  // both | char | user | ensemble
             planUseChat: true,
+            useSummary: true,    // read what summary extensions currently inject
             castExtra: '',      // extra character names for multi-character bots (comma separated)
             chatCount: 30,     // how many recent messages planning/ideas read
             difficulty: 'normal', // easy | normal | hard | hell
@@ -375,6 +376,8 @@ const DEFAULT_PROMPTS = Object.freeze({
         '{{obstacles}}',
         '{{world_info}}',
         '',
+        '{{summary}}',
+        '',
         '{{recent_chat}}',
         '',
         'Total length: about {{length}} replies from {{char}} (each usually answering one message from {{user}}).',
@@ -407,6 +410,8 @@ const DEFAULT_PROMPTS = Object.freeze({
         '- {{char}}: {{char_description}}',
         '- {{user}}: {{persona}}',
         '{{world_info}}',
+        '',
+        '{{summary}}',
         '',
         '{{recent_chat}}',
         '',
@@ -482,9 +487,9 @@ const PROMPT_INFO = {
     paceLate: { label: '페이스: 무르익는 중', vars: 'char, user' },
     paceOver: { label: '페이스: 충분히 익었을 때', vars: 'char, user' },
     paceHold: { label: '페이스: 머물기 중', vars: 'char, user' },
-    plan: { label: '과정 만들기', vars: 'char, user, cast, char_description, persona, story, ending, tone, keep, difficulty, obstacles, world_info, recent_chat, length, chapter_count', fixed: true },
+    plan: { label: '과정 만들기', vars: 'char, user, cast, char_description, persona, story, ending, tone, keep, difficulty, obstacles, world_info, summary, recent_chat, length, chapter_count', fixed: true },
     judge: { label: '단계 판정', vars: 'char, user, chapter, next_chapter, recent_messages, difficulty_judge', fixed: true },
-    ideas: { label: '아이디어 추천', vars: 'char, user, cast, char_description, persona, world_info, recent_chat, tone, keywords, spice, tropes, ending_dir, focus, exclude, variation_of, obstacles, avoid, count', fixed: true },
+    ideas: { label: '아이디어 추천', vars: 'char, user, cast, char_description, persona, world_info, summary, recent_chat, tone, keywords, spice, tropes, ending_dir, focus, exclude, variation_of, obstacles, avoid, count', fixed: true },
     diffEasy: { label: '난이도: 순한맛 태도', vars: 'char, user' },
     diffHard: { label: '난이도: 매운맛 태도', vars: 'char, user' },
     diffHell: { label: '난이도: 지옥맛 태도', vars: 'char, user' },
@@ -808,6 +813,46 @@ function castNames() {
     return [...new Set(names)];
 }
 
+// Summaries other extensions keep injected into the prompt (read-only).
+const SUMMARY_SOURCES = {
+    'scenario-summarizer': '시나리오 자동요약',
+    '1_memory': '실리 기본 요약',
+    'memoria_ledger': 'Memoria',
+};
+
+function findSummaries() {
+    const prompts = ctx().extensionPrompts || {};
+    const out = [];
+    for (const [key, p] of Object.entries(prompts)) {
+        if (key === MODULE) continue;
+        const known = SUMMARY_SOURCES[key];
+        if (!known && !/summar|memor|요약/i.test(key)) continue;
+        const text = String(p?.value ?? '').trim();
+        if (text) out.push({ key, label: known || key, text });
+    }
+    return out;
+}
+
+function summaryNote() {
+    const found = findSummaries();
+    if (!found.length) return '지금 들어가 있는 요약이 없어요. 요약 확장(시나리오 자동요약, 실리 기본 요약 등)이 요약을 넣고 있으면 자동으로 찾아서 읽어요';
+    return `찾은 요약: ${found.map(f => `${esc(f.label)} (${f.text.length.toLocaleString()}자)`).join(', ')} · 과정 만들기와 아이디어 추천에 같이 반영돼요`;
+}
+
+function summaryBlock(arc) {
+    if (arc.setup.useSummary === false) return '';
+    const found = findSummaries();
+    if (!found.length) return '';
+    const body = found.map(f => clip(f.text, Math.floor(6000 / found.length))).join('\n\n');
+    return `Summary of the story so far (from the chat's long-term memory; treat it as what has already happened):\n${body}`;
+}
+
+// Edited prompts may not have {{summary}}; then it rides along with the recent chat slot.
+function withSummary(template, vars, summary) {
+    if (!summary || template.includes('{{summary}}')) return { ...vars, summary };
+    return { ...vars, summary, recent_chat: [summary, vars.recent_chat].filter(Boolean).join('\n\n') };
+}
+
 function recentChatBlock(count, maxEach) {
     const recent = ctx().chat.filter(m => !m.is_system).slice(-count);
     if (!recent.length) return '';
@@ -826,7 +871,8 @@ async function generateStages(arc) {
         ? 'Choose between 3 and 8, based on the total length and how much story there is.'
         : `Exactly ${arc.setup.stageCount}.`;
 
-    const prompt = fillTemplate(getPrompt('plan'), {
+    const planTpl = getPrompt('plan');
+    const prompt = fillTemplate(planTpl, withSummary(planTpl, {
         char: c.name2,
         user: c.name1,
         char_description: charDesc,
@@ -842,7 +888,7 @@ async function generateStages(arc) {
         cast: castNames().join(', '),
         length: su.length,
         chapter_count: count,
-    }) + '\n' + fillTemplate(PLAN_FORMAT, { length: su.length });
+    }, summaryBlock(arc))) + '\n' + fillTemplate(PLAN_FORMAT, { length: su.length });
 
     const raw = await askLLM('You are a story planner for long-form collaborative roleplay. Output only valid JSON.', prompt, 4000);
     const data = parseJson(raw);
@@ -909,7 +955,8 @@ async function suggestIdeas(arc, count, avoid = [], variationOf = null) {
     const recent = su.ideaUseChat
         ? c.chat.filter(m => !m.is_system).slice(-Number(su.chatCount || 30)).map(m => `${m.name}: ${clip(m.mes, 400)}`).join('\n')
         : '';
-    const prompt = fillTemplate(getPrompt('ideas'), {
+    const ideasTpl = getPrompt('ideas');
+    const prompt = fillTemplate(ideasTpl, withSummary(ideasTpl, {
         char: c.name2,
         user: c.name1,
         char_description: charDesc,
@@ -928,7 +975,7 @@ async function suggestIdeas(arc, count, avoid = [], variationOf = null) {
         exclude: su.ideaAvoid.trim(),
         variation_of: variationOf ? `Make every idea a variation on this one: keep its core premise and feel, but vary the turning points, stakes and ending so each is clearly its own take: ${variationOf.title}: ${variationOf.story} (ending: ${variationOf.ending})` : '',
         count,
-    }) + '\n' + IDEAS_FORMAT;
+    }, summaryBlock(arc))) + '\n' + IDEAS_FORMAT;
     const data = parseJson(await askLLM('You are a creative story consultant for long-form roleplay. Output only valid JSON.', prompt, 2400));
     const list = (Array.isArray(data.ideas) ? data.ideas : Array.isArray(data) ? data : [])
         .map(i => ({
@@ -1353,7 +1400,9 @@ function renderRefs(arc) {
             ${chip(`${c.name2} 캐릭터 설정`, s.useChar, 'useChar', '1')}
             ${chip(`${c.name1} 페르소나`, s.usePersona, 'usePersona', '1')}
             ${chip('최근 대화 반영', s.planUseChat, 'planUseChat', '1')}
+            ${chip('요약 반영', s.useSummary !== false, 'useSummary', '1')}
         </div>
+        ${s.useSummary !== false ? `<p class="sb-sub">${summaryNote()}</p>` : ''}
         ${s.planUseChat || s.ideaUseChat ? `<div class="sb-chatcount">
             <label class="sb-inline">최근 메시지 몇 개 읽을까?
                 <input class="sb-input sb-num" type="number" min="1" max="100" data-bind="chatCount" value="${esc(s.chatCount)}">
@@ -1959,6 +2008,7 @@ async function onClick(e) {
             break;
         }
         case 'planUseChat': su.planUseChat = !su.planUseChat; break;
+        case 'useSummary': su.useSummary = su.useSummary === false; break;
         case 'ideaSpice': su.ideaSpice = val; break;
         case 'difficulty': su.difficulty = val; break;
         case 'obstacles': su.obstacles = !su.obstacles; break;
