@@ -689,14 +689,34 @@ function wiCount(arc) {
     return Object.values(arc.setup.wi).reduce((n, u) => n + u.length, 0);
 }
 
+function replyError(msg) {
+    const e = new Error(msg);
+    e.spReply = true;   // the API answered; the problem is the answer itself
+    return e;
+}
+
+function snippet(text, n = 60) {
+    const t = String(text).replace(/\s+/g, ' ').trim();
+    return t.length > n ? t.slice(0, n) + '…' : t;
+}
+
 function parseJson(text) {
-    if (!text) throw new Error('빈 응답');
+    if (!text || !String(text).trim()) {
+        throw replyError('AI가 빈 답을 보냈어요. 모델 필터(검열)에 막혔을 가능성이 커요. 다른 모델로 해보거나 내용을 조금 순하게 써 보세요');
+    }
     let t = String(text).replace(/```(?:json)?/gi, '').trim();
     const first = t.search(/[[{]/);
     const last = Math.max(t.lastIndexOf('}'), t.lastIndexOf(']'));
-    if (first < 0 || last < first) throw new Error('JSON을 찾지 못함');
-    t = t.slice(first, last + 1);
-    return JSON.parse(t);
+    if (first < 0 || last < first) {
+        console.warn('[Slow Plot] non-JSON reply:', text);
+        throw replyError(`AI가 형식 대신 일반 문장으로 답했어요. 보통 모델이 내용을 거절(검열)한 경우예요. 답 앞부분: "${snippet(text)}"`);
+    }
+    try {
+        return JSON.parse(t.slice(first, last + 1));
+    } catch {
+        console.warn('[Slow Plot] broken JSON reply:', text);
+        throw replyError('AI 답이 중간에 끊겼거나 형식이 깨졌어요. 다시 눌러 보거나, 너무 길면 단계 수를 줄여 보세요');
+    }
 }
 
 function clip(text, max) {
@@ -1836,7 +1856,7 @@ async function onClick(e) {
                 arc.ideas = await suggestIdeas(arc, 3, arc.ideas || []);
             } catch (err) {
                 console.error(LOG, err);
-                toastr.error('추천 실패: ' + err.message + ' (API 연결을 확인해 주세요)', 'Slow Plot');
+                toastr.error('추천 실패: ' + err.message + (err.spReply ? '' : ' (API 연결을 확인해 주세요)'), 'Slow Plot');
             } finally { busy = ''; }
             break;
         }
@@ -1888,7 +1908,7 @@ async function onClick(e) {
                 toastr.success('과정을 만들었어요! 마음에 안 드는 단계는 고쳐보세요', 'Slow Plot');
             } catch (err) {
                 console.error(LOG, err);
-                toastr.error('과정 만들기 실패: ' + err.message + ' (API 연결을 확인해 주세요)', 'Slow Plot');
+                toastr.error('과정 만들기 실패: ' + err.message + (err.spReply ? '' : ' (API 연결을 확인해 주세요)'), 'Slow Plot');
             } finally { busy = ''; }
             break;
         }
