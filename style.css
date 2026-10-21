@@ -479,3 +479,9 @@
 #sb_root .sb-wi-book { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #sb_root .sb-wi-book b { margin-left: 2px; font-weight: normal; opacity: .85; }
 #sb_root .sb-inner-new { color: var(--sb-pink-dark); }
+
+/* spoiler guard */
+#sb_root .sb-hide-row { display: flex; justify-content: center; }
+#sb_root .sb-peek { all: unset; cursor: pointer; display: block; width: 100%; box-sizing: border-box; font-size: 12px; color: #A99FC9; padding: 6px 2px; border-radius: 10px; }
+#sb_root .sb-peek:focus-visible { outline: 2px solid var(--sb-purple); }
+#sb_root .sb-rehide { all: unset; cursor: pointer; font-size: 11px; color: var(--sb-purple); text-decoration: underline; margin-left: 4px; }
