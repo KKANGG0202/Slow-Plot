@@ -455,7 +455,7 @@ const DEFAULT_PROMPTS = Object.freeze({
         '- fact_en: one plain English sentence with only the underlying fact (who is what), neutral, with no adjectives about looks, decline or flaws. Example shape: "{{user}} is in her forties and {{char}} is in his twenties."',
         '- tendency_en: one or two English sentences describing, as plain fact, the concrete everyday situations where this is visible (differences that show up in talk, habits, references, bodies or circumstances). If the note is about a contrast (age, looks, status...), state the contrast itself plainly, without erasing it.',
         '- when_en: one English sentence on the kinds of moments where it tends to come up.',
-        '- show_en: two or three short, concrete examples of how it has looked in such moments.',
+        '- show_en: two or three short, concrete narrative details of how it has looked in such moments: things that can be seen, touched or heard (a partial physical detail such as hands, hair, skin or the way clothes sit; a gesture; an object; the texture of a voice), rather than lines of dialogue that state it.',
         '- keywords: 4 to 10 short words or word stems, in the language of the user\'s note and in English, that a reply touching this would likely contain.',
         'Before answering, check each field against this list (silently; output only the JSON):',
         '- [ ] Every sentence describes the story world: who is what, what situations come up, what can be seen or heard.',
@@ -476,6 +476,7 @@ const DEFAULT_PROMPTS = Object.freeze({
         '- {{appeal}}',
         '- It tends to come up: {{when}}',
         '- How it has looked before: {{show}}',
+        'If it does come up, let it live in the narration rather than in someone saying it out loud: where a gaze rests, one or two precise, partial physical details, a gesture, an object, the grain of a voice. A small exact detail beats a full description or a remark about it.',
     ].join('\n'),
     event: 'For this reply only: let one small unexpected event happen that fits the current scene and chapter (an interruption, a discovery, a visitor, a mishap, a sudden change of plans or weather). Keep it proportionate, do not resolve it, and leave room for {{user}} to react.',
     inner: [
