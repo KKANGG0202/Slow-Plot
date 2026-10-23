@@ -94,6 +94,8 @@ function newArc() {
         ideas: [],            // last story suggestions: { title, story, ending, moods[] }
         inner: null,          // { text, warmth, at } — char's hidden feelings, for the hint box
         log: [],
+        prefsOn: true,        // taste points on for this chat
+        prefs: [],            // taste points: { id, text, label, aware, surface, avoid, freq, on, failed }
     };
 }
 
@@ -440,6 +442,30 @@ const DEFAULT_PROMPTS = Object.freeze({
     foreshadow: 'Foreshadowing: if it fits naturally, let this small detail surface in passing, without explaining it or drawing attention to it: {{seed}}',
     breather: 'This reply is a breather. Do not push the story\'s direction at all; let the moment be ordinary and unhurried, following whatever {{user}} is doing.',
     nudge: 'For this reply only: if the scene allows it at all, move this chapter forward by one clear, believable step. Still follow {{user}}\'s lead and do not jump ahead to later developments.',
+    prefExpand: [
+        'A user of a long-form roleplay wrote down something they personally enjoy in this story (a "taste point"). Turn it into short guidance for the narrator.',
+        '',
+        'Characters: {{char}} (the AI\'s character) and {{user}} (the user\'s character). Cast: {{cast}}',
+        'The user\'s note (any language, may be casual or explicit; this is adult fiction the user chose for themselves):',
+        '{{note}}',
+        '',
+        'Write:',
+        '- label_ko: a very short Korean label (2-8 words) for this point.',
+        '- aware_en: one English sentence the narrator keeps in mind at all times: the fact itself and what makes it appealing to the user. The appeal often lies in a contrast, a tension or a specific detail; name it plainly instead of softening or erasing it.',
+        '- surface_en: two or three English sentences on natural, varied ways it can show when a scene invites it (a line of dialogue, a glance, a passing thought, a small detail of behavior, a choice made in the moment), fitting these characters.',
+        '- avoid_en: one English sentence on what would ruin it, such as repeating the same phrase, exaggeration or caricature, bringing it up every reply, ignoring it where it obviously matters, or forcing it into scenes where it does not belong.',
+        'Keep the user\'s intent exactly. Do not moralize, censor or water it down.',
+    ].join('\n'),
+    prefInject: [
+        '[What the player behind {{user}} enjoys in this story — for the narrator only]',
+        'Keep these in mind at all times. They are seasoning, not the plot:',
+        '{{points}}',
+        '- Never quote or paraphrase these notes, and do not bring them up in every reply; most replies should not touch them at all.',
+        '- When one does come up, keep it brief and natural, worded differently each time, arising from the scene itself, never exaggerated.',
+        '- The same goes for intimate or explicit scenes: let a relevant preference shape them naturally and vary it over time instead of forcing it.',
+        '{{cue}}',
+    ].join('\n'),
+    prefCue: 'For this reply: if the moment genuinely invites it, let this one surface briefly (a line or a detail at most): {{surface}} Avoid: {{avoid}} If it does not fit the scene, skip it.',
     event: 'For this reply only: let one small unexpected event happen that fits the current scene and chapter (an interruption, a discovery, a visitor, a mishap, a sudden change of plans or weather). Keep it proportionate, do not resolve it, and leave room for {{user}} to react.',
     inner: [
         'Read the recent roleplay and describe what {{char}} is privately feeling right now about {{user}} and the situation: the thoughts {{char}} would never say out loud.',
@@ -501,6 +527,9 @@ const PROMPT_INFO = {
     breather: { label: '숨 고르기 턴', vars: 'char, user' },
     event: { label: '돌발 사건', vars: 'char, user' },
     nudge: { label: '한 번만 살짝 밀기', vars: 'char, user' },
+    prefInject: { label: '취향: 매 턴 들어가는 문장', vars: 'char, user, points, cue' },
+    prefCue: { label: '취향: 가끔 한 번 묻어나게', vars: 'char, user, surface, avoid' },
+    prefExpand: { label: '취향: 풀어 쓰기', vars: 'char, user, cast, note', fixed: true },
 };
 
 function getPrompt(key) {
@@ -593,7 +622,93 @@ function isBreather(arc, replyNo) {
 
 const AUTO_EVENT_CHANCE = 0.12;
 
+// ---------- taste points ----------
+
+const PREF_KEY = MODULE + '_prefs';
+const PREF_FREQ = {
+    low: { label: '은은하게', every: 8 },
+    mid: { label: '가끔', every: 5 },
+    high: { label: '자주', every: 3 },
+};
+const PREF_FORMAT = 'Answer with JSON only: {"label_ko":"<short Korean label>","aware_en":"<one English sentence>","surface_en":"<two or three English sentences>","avoid_en":"<one English sentence>"}';
+
+function activePrefs(arc) {
+    return (arc?.prefs || []).filter(p => p.on !== false && (p.aware || p.text));
+}
+
+function prefOffset(id) {
+    let h = 0;
+    for (const ch of String(id)) h = (h * 31 + ch.charCodeAt(0)) % 997;
+    return h;
+}
+
+// Which point (if any) gets a gentle cue for reply number `turn`. Pure function of the turn,
+// so regenerating the same reply gets the same cue. Cues only land on every other reply,
+// so several points never pile up into a cue on every turn.
+function prefCueFor(arc, turn) {
+    if (turn % 2) return null;
+    const due = activePrefs(arc).filter(p => {
+        const every = (PREF_FREQ[p.freq] || PREF_FREQ.mid).every;
+        const off = prefOffset(p.id);
+        return (turn + off) % every === 0 || (turn - 1 + off) % every === 0;
+    });
+    return due.length ? due[(turn / 2) % due.length] : null;
+}
+
+// AI-written guidance may use {{user}} / {{char}}; fill them in ourselves.
+function withNames(text) {
+    const c = ctx();
+    return String(text || '').replace(/\{\{user\}\}/gi, c.name1).replace(/\{\{char\}\}/gi, c.name2);
+}
+
+function buildPrefInjection(arc) {
+    const c = ctx();
+    const prefs = activePrefs(arc);
+    if (!prefs.length) return '';
+    const base = { char: c.name2, user: c.name1 };
+    const cue = prefCueFor(arc, messageCount() + 1);
+    return fillTemplate(getPrompt('prefInject'), {
+        ...base,
+        points: prefs.map(p => `- ${withNames(p.aware || p.text)}`).join('\n'),
+        cue: cue ? fillTemplate(getPrompt('prefCue'), {
+            ...base,
+            surface: withNames(cue.surface || cue.aware || cue.text),
+            avoid: withNames(cue.avoid || 'repeating the same phrase, exaggerating it, or forcing it.'),
+        }) : '',
+    });
+}
+
+function updatePrefInjection() {
+    const { setExtensionPrompt } = ctx();
+    const s = getSettings();
+    const arc = hasChat() ? getArc() : null;
+    const text = s.enabled && arc && arc.prefsOn !== false ? buildPrefInjection(arc) : '';
+    if (!text) { setExtensionPrompt(PREF_KEY, '', PROMPT_NONE, 0); return; }
+    setExtensionPrompt(PREF_KEY, text, PROMPT_IN_CHAT, Number(s.depth), false, ROLES[s.role] ?? 0);
+}
+
+async function expandPref(arc, text) {
+    const c = ctx();
+    const prompt = fillTemplate(getPrompt('prefExpand'), {
+        char: c.name2,
+        user: c.name1,
+        cast: castNames().join(', '),
+        note: text,
+    }) + '\n\n' + PREF_FORMAT;
+    const data = parseJson(await askLLM('You turn a roleplay user\'s personal preferences into concise narrator guidance. Output only valid JSON.', prompt, 900));
+    const aware = String(data.aware_en ?? '').trim();
+    if (!aware) throw replyError('AI가 내용을 비워서 보냈어요');
+    return {
+        label: String(data.label_ko ?? '').trim(),
+        aware,
+        surface: String(data.surface_en ?? '').trim(),
+        avoid: String(data.avoid_en ?? '').trim(),
+        failed: false,
+    };
+}
+
 function updateInjection() {
+    updatePrefInjection();
     const { setExtensionPrompt } = ctx();
     const s = getSettings();
     const arc = hasChat() ? getArc() : null;
@@ -1638,6 +1753,73 @@ function renderInner(arc) {
 
 let openLog = -1;
 
+let prefDraft = '';
+let prefDraftFreq = 'mid';
+let prefEditing = null;   // id of the point being edited
+let prefOpen = null;      // id whose AI reading is unfolded
+
+function prefFreqChips(cur, id) {
+    return Object.entries(PREF_FREQ).map(([k, f]) => `<button type="button" class="sb-chip${cur === k ? ' on' : ''}" data-act="prefFreq" data-value="${id}:${k}">${f.label}</button>`).join('');
+}
+
+function renderPrefCard(arc, p) {
+    const busyHere = busy === `pref${p.id}`;
+    if (prefEditing === p.id) {
+        return `
+        <div class="sb-pref edit">
+            <textarea class="sb-input sb-textarea" data-pref-edit="${p.id}">${esc(p.text)}</textarea>
+            <div class="sb-row">
+                <button type="button" class="sb-btn sb-small" data-act="prefCancel">취소</button>
+                <span class="sb-grow"></span>
+                <button type="button" class="sb-btn sb-small sb-primary" data-act="prefSave" data-value="${p.id}" ${busy ? 'disabled' : ''}>${busyHere ? '<i class="fa-solid fa-spinner fa-spin"></i> 풀어 쓰는 중…' : '저장'}</button>
+            </div>
+        </div>`;
+    }
+    const open = prefOpen === p.id;
+    return `
+    <div class="sb-pref${p.on === false ? ' off' : ''}">
+        <div class="sb-pref-head">
+            <span class="sb-pref-label">${esc(p.label || p.text.slice(0, 20))}</span>
+            <label class="sb-switch sb-switch-sm" title="이 포인트 켜기/끄기"><input type="checkbox" data-pref-on="${p.id}" ${p.on !== false ? 'checked' : ''}><span class="sb-track"><span class="sb-knob"></span></span></label>
+        </div>
+        <p class="sb-pref-text">${esc(p.text)}</p>
+        <div class="sb-chips">${prefFreqChips(p.freq || 'mid', p.id)}</div>
+        ${p.failed ? '<p class="sb-sub sb-warn">AI가 풀어 쓰지 못해서 적은 문장 그대로 넣고 있어요. 다시 풀어 쓰기를 눌러보세요</p>' : ''}
+        <div class="sb-row">
+            <button type="button" class="sb-btn sb-small" data-act="prefShow" data-value="${p.id}">${open ? '접기 ▴' : 'AI가 이해한 내용 ▾'}</button>
+            <span class="sb-grow"></span>
+            <button type="button" class="sb-icon" data-act="prefRedo" data-value="${p.id}" aria-label="다시 풀어 쓰기" ${busy ? 'disabled' : ''}>${busyHere ? '<i class="fa-solid fa-spinner fa-spin"></i>' : '<i class="fa-solid fa-rotate"></i>'}</button>
+            <button type="button" class="sb-icon" data-act="prefEdit" data-value="${p.id}" aria-label="고치기"><i class="fa-solid fa-pen"></i></button>
+            <button type="button" class="sb-icon sb-icon-del" data-act="prefDel" data-value="${p.id}" aria-label="지우기"><i class="fa-solid fa-trash-can"></i></button>
+        </div>
+        ${open ? `<div class="sb-pref-ai">
+            <p><b>늘 알고 있는 것</b>${esc(withNames(p.aware || p.text))}</p>
+            ${p.surface ? `<p><b>묻어날 때</b>${esc(withNames(p.surface))}</p>` : ''}
+            ${p.avoid ? `<p><b>피할 것</b>${esc(withNames(p.avoid))}</p>` : ''}
+        </div>` : ''}
+    </div>`;
+}
+
+function renderPrefs(arc) {
+    const on = arc.prefsOn !== false;
+    return `
+    <div class="sb-card">
+        <label class="sb-switch-line">
+            <span><b>💗 내 취향 포인트</b><span class="sb-sub sb-block">이 채팅방에만 적용돼요</span></span>
+            <span class="sb-switch"><input id="sb_prefs_on" type="checkbox" ${on ? 'checked' : ''}><span class="sb-track"><span class="sb-knob"></span></span></span>
+        </label>
+        <p class="sb-sub">좋아하는 포인트를 적어두면 깡통이 늘 알고 있다가, 어울리는 장면에서만 가끔 한 줄씩 자연스럽게 묻어나게 해줘요. 매번 꺼내거나 과하게 묘사하지 않고, 적은 문장을 그대로 따라 하지도 않아요. 단계 진행이랑 상관없이 따로 쓸 수 있어요.</p>
+        <div class="sb-pref-add">
+            <textarea class="sb-input sb-textarea" data-pref-draft placeholder="예: 깡캐는 40대, 깡통은 20대. 세대 차이가 자연스럽게 묻어났으면&#10;외모, 나이, 성격, 말투, 관계, 19금 취향까지 뭐든 편하게 적어요">${esc(prefDraft)}</textarea>
+            <div class="sb-chips">${prefFreqChips(prefDraftFreq, 'new')}</div>
+            <button type="button" class="sb-btn sb-primary" data-act="prefAdd" ${busy ? 'disabled' : ''}>${busy === 'prefnew' ? '<i class="fa-solid fa-spinner fa-spin"></i> AI가 풀어 쓰는 중…' : '포인트 추가 ✦'}</button>
+            <p class="sb-sub">늘 알고는 있고, 은은하게는 약 8답변, 가끔은 약 5답변, 자주는 약 3~4답변에 한 번 "어울리면 한 줄" 신호가 가요. 안 어울리면 그냥 넘어가요</p>
+        </div>
+        ${arc.prefs.length ? `<div class="sb-prefs">${arc.prefs.map(p => renderPrefCard(arc, p)).join('')}</div>` : ''}
+        ${arc.prefs.length ? '<button type="button" class="sb-btn" data-act="prefPreview">AI한테 가는 문장 보기</button>' : ''}
+    </div>`;
+}
+
 function renderLog(arc) {
     if (!arc.log.length && !judging) return '';
     return `
@@ -1878,8 +2060,14 @@ function onQuickClick(e) {
 let activeTab = 'plot';   // plot | progress | settings
 
 function renderTabs(arc) {
-    const tabs = [['plot', '📝 줄거리'], ['progress', '🐌 진행'], ['settings', '⚙️ 설정']];
-    return `<div class="sb-tabs" role="tablist">${tabs.map(([k, l]) => `<button type="button" role="tab" class="sb-tab${activeTab === k ? ' on' : ''}" aria-selected="${activeTab === k}" data-act="tab" data-value="${k}">${l}${k === 'progress' && arc && arc.stages.length ? ` <span class="sb-tab-badge">${arc.status === 'draft' ? '시작 전' : `${arc.current + 1}/${arc.stages.length}`}</span>` : ''}</button>`).join('')}</div>`;
+    const tabs = [['plot', '📝 줄거리'], ['progress', '🐌 진행'], ['prefs', '💗 취향'], ['settings', '⚙️ 설정']];
+    const prefCount = arc && arc.prefsOn !== false ? activePrefs(arc).length : 0;
+    const badge = k => {
+        if (k === 'progress' && arc && arc.stages.length) return ` <span class="sb-tab-badge">${arc.status === 'draft' ? '시작 전' : `${arc.current + 1}/${arc.stages.length}`}</span>`;
+        if (k === 'prefs' && prefCount) return ` <span class="sb-tab-badge">${prefCount}</span>`;
+        return '';
+    };
+    return `<div class="sb-tabs sb-tabs4" role="tablist">${tabs.map(([k, l]) => `<button type="button" role="tab" class="sb-tab${activeTab === k ? ' on' : ''}" aria-selected="${activeTab === k}" data-act="tab" data-value="${k}">${l}${badge(k)}</button>`).join('')}</div>`;
 }
 
 function render() {
@@ -1899,6 +2087,8 @@ function render() {
             : '<div class="sb-card sb-center sb-sub">아직 과정이 없어요. 📝 줄거리 탭에서 과정을 만들어 주세요</div>';
     } else if (activeTab === 'settings') {
         content = renderAdvanced();
+    } else if (activeTab === 'prefs') {
+        content = renderPrefs(arc);
     } else {
         content = renderSetup(arc);
     }
@@ -1954,6 +2144,7 @@ async function onClick(e) {
     const act = btn.dataset.act;
     const val = btn.dataset.value;
     if (act === 'tab') { activeTab = val; render(); return; }
+    if (act.startsWith('pref')) { await onPrefClick(act, val); return; }
     if (act === 'toggleHide') {
         const arc = getArc();
         const next = !hidingOn(arc);
@@ -2232,8 +2423,87 @@ async function onClick(e) {
     render();
 }
 
+async function onPrefClick(act, val) {
+    const arc = getArc();
+    const find = id => arc.prefs.find(p => p.id === id);
+    const expandInto = async (p, key) => {
+        busy = key; render();
+        try {
+            Object.assign(p, await expandPref(arc, p.text));
+        } catch (err) {
+            console.error(LOG, 'pref expand failed', err);
+            Object.assign(p, { label: p.label || '', aware: '', surface: '', avoid: '', failed: true });
+            toastr.warning('풀어 쓰기 실패: ' + err.message + ' · 일단 적은 문장 그대로 넣을게요', 'Slow Plot');
+        } finally { busy = ''; }
+    };
+    switch (act) {
+        case 'prefAdd': {
+            const text = prefDraft.trim();
+            if (!text) { toastr.warning('포인트를 먼저 적어주세요', 'Slow Plot'); return; }
+            const p = { id: Date.now().toString(36), text, freq: prefDraftFreq, on: true };
+            arc.prefs.push(p);
+            prefDraft = '';
+            prefDraftFreq = 'mid';
+            await expandInto(p, 'prefnew');
+            break;
+        }
+        case 'prefFreq': {
+            const [id, f] = String(val).split(':');
+            if (id === 'new') { prefDraftFreq = f; render(); return; }
+            const p = find(id); if (p) p.freq = f;
+            break;
+        }
+        case 'prefDel': {
+            const p = find(val); if (!p) return;
+            const ok = await ctx().Popup.show.confirm('포인트 지우기', `「${p.label || p.text.slice(0, 20)}」 포인트를 지울까요?`);
+            if (!ok) return;
+            arc.prefs = arc.prefs.filter(x => x.id !== val);
+            break;
+        }
+        case 'prefEdit': prefEditing = val; render(); return;
+        case 'prefCancel': prefEditing = null; render(); return;
+        case 'prefSave': {
+            const p = find(val); if (!p) return;
+            const el = document.querySelector(`#sb_root [data-pref-edit="${val}"]`);
+            const text = String(el?.value ?? '').trim();
+            if (!text) { toastr.warning('내용을 적어주세요', 'Slow Plot'); return; }
+            prefEditing = null;
+            if (text !== p.text) { p.text = text; await expandInto(p, `pref${p.id}`); }
+            break;
+        }
+        case 'prefRedo': {
+            const p = find(val); if (!p) return;
+            await expandInto(p, `pref${p.id}`);
+            break;
+        }
+        case 'prefShow': prefOpen = prefOpen === val ? null : val; render(); return;
+        case 'prefPreview': {
+            const text = buildPrefInjection(arc) || '(켜져 있는 포인트가 없어요)';
+            await ctx().Popup.show.text('AI한테 가는 문장 (취향)', `<pre class="sb-pre">${esc(text)}</pre>`);
+            return;
+        }
+        default: return;
+    }
+    save();
+    updateInjection();
+    render();
+}
+
 function onInput(e) {
     const el = e.target;
+    if (el.dataset.prefDraft !== undefined) { prefDraft = el.value; return; }
+    if (el.dataset.prefOn !== undefined) {
+        if (e.type !== 'change') return;
+        const arc = getArc();
+        const p = arc.prefs.find(x => x.id === el.dataset.prefOn);
+        if (p) { p.on = el.checked; save(); updateInjection(); render(); }
+        return;
+    }
+    if (el.id === 'sb_prefs_on') {
+        if (e.type !== 'change') return;
+        getArc().prefsOn = el.checked; save(); updateInjection(); render();
+        return;
+    }
     if (el.id === 'sb_enabled') { if (e.type === 'change') setEnabled(el.checked); return; }
     if (el.id === 'sb_hide_stages') { if (e.type === 'change') setHideStages(el.checked); return; }
     if (el.id === 'sb_stage_toast') {
@@ -2348,6 +2618,9 @@ function softRender() {
 
 function refresh() {
     editing = -1;
+    prefEditing = null;
+    prefOpen = null;
+    prefDraft = '';
     peeked.clear();
     const arc = hasChat() ? getArc() : null;
     activeTab = arc && arc.stages.length ? 'progress' : 'plot';
@@ -2369,6 +2642,7 @@ function refresh() {
     eventSource.on(event_types.GENERATION_AFTER_COMMANDS, (type) => {
         if (type === 'quiet' || type === 'impersonate') {
             ctx().setExtensionPrompt(MODULE, '', PROMPT_NONE, 0);
+            ctx().setExtensionPrompt(PREF_KEY, '', PROMPT_NONE, 0);
             return;
         }
         updateInjection();
