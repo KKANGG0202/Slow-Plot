@@ -457,7 +457,12 @@ const DEFAULT_PROMPTS = Object.freeze({
         '- when_en: one English sentence on the kinds of moments where it tends to come up.',
         '- show_en: two or three short, concrete examples of how it has looked in such moments.',
         '- keywords: 4 to 10 short words or word stems, in the language of the user\'s note and in English, that a reply touching this would likely contain.',
-        'This note reflects the user\'s own taste as a reader, not the characters\' tastes. Never claim that {{char}} or anyone else likes, prefers, is drawn to or is bothered by it, and do not invent feelings about it for any character; how they react is left to their own personalities. Write everything as neutral statements about the story world. Do not address the narrator, do not say what anyone enjoys or finds appealing, and do not use words like emphasize, highlight, appeal, attractive or hot. Keep the user\'s intent exactly and do not water it down. Do not bring in physical decline, wrinkles, sagging skin, frailty or similar clichés unless the note itself asks for them.',
+        'Before answering, check each field against this list (silently; output only the JSON):',
+        '- [ ] Every sentence describes the story world: who is what, what situations come up, what can be seen or heard.',
+        '- [ ] Every character\'s feelings about it are left unwritten, neither positive nor negative (no liking, being drawn to, minding, ignoring or not caring). Their reactions will come from their own personalities in the story.',
+        '- [ ] If the note is about a contrast (age, looks, status...), the contrast itself is stated plainly, not softened away.',
+        '- [ ] Nothing addresses the narrator, and no words like emphasize, highlight, appeal, attractive or hot.',
+        '- [ ] The user\'s intent is kept exactly, without moralizing or watering down, and without decline clichés (wrinkles, sagging skin, frailty) unless the note asks for them.',
     ].join('\n'),
     prefInject: [
         '[Background facts of this story — for the narrator only]',
