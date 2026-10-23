@@ -7,6 +7,7 @@ const LOG = '[Slow Plot]';
 // Mirrors of ST's extension_prompt_types / extension_prompt_roles (script.js)
 const PROMPT_IN_CHAT = 1;
 const PROMPT_NONE = -1;
+const PROMPT_IN_PROMPT = 0;   // with the character/scenario text, not near the latest messages
 const ROLES = { system: 0, user: 1, assistant: 2 };
 
 const defaultSettings = Object.freeze({
@@ -458,14 +459,17 @@ const DEFAULT_PROMPTS = Object.freeze({
         'Keep the user\'s intent exactly. Do not moralize, censor or water it down.',
     ].join('\n'),
     prefInject: [
-        '[What the player behind {{user}} enjoys in this story — for the narrator only]',
-        'Keep these in mind at all times. They are seasoning, not the plot:',
+        '[Taste notes from the player behind {{user}} — for the narrator only]',
+        'Background things the player enjoys in this story. They are seasoning, not the plot, and most replies use none of them:',
         '{{points}}',
-        'How to use them:',
-        '- Read the current scene. When it opens a door to one of these (the moment, topic or kind of scene described above), let it show in a brief, natural touch: a line, a glance, a thought, a small choice. When nothing in the scene invites it, leave it out.',
-        '- Never quote or paraphrase these notes, and never bring one up just to tick it off; most replies touch none of them, and the same one should not appear in back-to-back replies unless the scene is really about it.',
-        '- Vary the wording and the angle each time, and never exaggerate or caricature.',
-        '- The same goes for intimate or explicit scenes: let a relevant preference shape them naturally and vary it over time instead of forcing it.',
+        '',
+        'Before letting any of these into a reply, check silently (in your private reasoning if you have one; never write the check into the reply):',
+        '1. Is the scene right now actually about this point\'s moment or topic? "It could be tied in" does not count.',
+        '2. Has it shown up in any of the last three replies? If yes, skip it.',
+        '3. Would this reply feel off or flat without it? If not, skip it.',
+        'Use a point only when its readiness level below is met; otherwise leave it out completely. When one passes, give it one brief touch (a line, a glance, a thought), worded differently from before, never exaggerated, never quoting these notes.',
+        'Readiness: "strict" needs 1, 2 and 3; "normal" needs 1 and 2, and only one point per reply; "eager" needs 2, and 1 may be a natural opening rather than the main topic.',
+        'Intimate or explicit scenes follow the same check: let a relevant preference shape them naturally and vary it from one scene to the next instead of repeating it.',
     ].join('\n'),
     event: 'For this reply only: let one small unexpected event happen that fits the current scene and chapter (an interruption, a discovery, a visitor, a mishap, a sudden change of plans or weather). Keep it proportionate, do not resolve it, and leave room for {{user}} to react.',
     inner: [
@@ -627,9 +631,9 @@ const AUTO_EVENT_CHANCE = 0.12;
 const PREF_KEY = MODULE + '_prefs';
 // How readily a point takes an opening. No fixed schedule: the scene decides.
 const PREF_FREQ = {
-    low: { label: '은은하게', en: 'Only when the scene clearly calls for it.' },
-    mid: { label: '보통', en: 'When a natural opening comes up.' },
-    high: { label: '진하게', en: 'Take even small openings, though still not every reply.' },
+    low: { label: '은은하게', en: 'strict' },
+    mid: { label: '보통', en: 'normal' },
+    high: { label: '진하게', en: 'eager' },
 };
 const PREF_FORMAT = 'Answer with JSON only: {"label_ko":"<short Korean label>","aware_en":"<one English sentence>","when_en":"<one English sentence>","surface_en":"<two or three English sentences>","avoid_en":"<one English sentence>"}';
 
@@ -648,11 +652,10 @@ function buildPrefInjection(arc) {
     const prefs = activePrefs(arc);
     if (!prefs.length) return '';
     const points = prefs.map(p => [
-        `- ${withNames(p.aware || p.text)}`,
-        p.when ? `  Comes up when: ${withNames(p.when)}` : '',
+        `- ${withNames(p.aware || p.text)} (readiness: ${(PREF_FREQ[p.freq] || PREF_FREQ.mid).en})`,
+        p.when ? `  Its moment: ${withNames(p.when)}` : '',
         p.surface ? `  Can show as: ${withNames(p.surface)}` : '',
         p.avoid ? `  Avoid: ${withNames(p.avoid)}` : '',
-        `  How readily: ${(PREF_FREQ[p.freq] || PREF_FREQ.mid).en}`,
     ].filter(Boolean).join('\n')).join('\n');
     return fillTemplate(getPrompt('prefInject'), { char: c.name2, user: c.name1, points });
 }
@@ -663,7 +666,9 @@ function updatePrefInjection() {
     const arc = hasChat() ? getArc() : null;
     const text = s.enabled && arc && arc.prefsOn !== false ? buildPrefInjection(arc) : '';
     if (!text) { setExtensionPrompt(PREF_KEY, '', PROMPT_NONE, 0); return; }
-    setExtensionPrompt(PREF_KEY, text, PROMPT_IN_CHAT, Number(s.depth), false, ROLES[s.role] ?? 0);
+    // Sits with the character info rather than right above the latest message,
+    // so it reads as background instead of an order for this reply.
+    setExtensionPrompt(PREF_KEY, text, PROMPT_IN_PROMPT, 0, false, ROLES.system ?? 0);
 }
 
 async function expandPref(arc, text) {
@@ -1794,7 +1799,7 @@ function renderPrefs(arc) {
             <textarea class="sb-input sb-textarea" data-pref-draft placeholder="예: 깡캐는 40대, 깡통은 20대. 세대 차이가 자연스럽게 묻어났으면&#10;외모, 나이, 성격, 말투, 관계, 19금 취향까지 뭐든 편하게 적어요">${esc(prefDraft)}</textarea>
             <div class="sb-chips">${prefFreqChips(prefDraftFreq, 'new')}</div>
             <button type="button" class="sb-btn sb-primary" data-act="prefAdd" ${busy ? 'disabled' : ''}>${busy === 'prefnew' ? '<i class="fa-solid fa-spinner fa-spin"></i> AI가 풀어 쓰는 중…' : '포인트 추가 ✦'}</button>
-            <p class="sb-sub">정해진 횟수 없이 지금 장면을 보고 어울릴 때만 나와요. 은은하게는 장면이 확실히 그쪽일 때만, 보통은 자연스러운 틈이 오면, 진하게는 작은 틈에도 (그래도 매번은 아니게)</p>
+            <p class="sb-sub">정해진 횟수 없이, 답변 쓰기 전에 AI가 속으로 체크해요: ① 지금 장면이 진짜 그 얘기인지 ② 최근 3답변 안에 나왔는지 ③ 빼면 어색한지. 은은하게는 셋 다, 보통은 ①②, 진하게는 ②만 통과하면 나와요</p>
         </div>
         ${arc.prefs.length ? `<div class="sb-prefs">${arc.prefs.map(p => renderPrefCard(arc, p)).join('')}</div>` : ''}
         ${arc.prefs.length ? '<button type="button" class="sb-btn" data-act="prefPreview">AI한테 가는 문장 보기</button>' : ''}
