@@ -444,7 +444,7 @@ const DEFAULT_PROMPTS = Object.freeze({
     breather: 'This reply is a breather. Do not push the story\'s direction at all; let the moment be ordinary and unhurried, following whatever {{user}} is doing.',
     nudge: 'For this reply only: if the scene allows it at all, move this chapter forward by one clear, believable step. Still follow {{user}}\'s lead and do not jump ahead to later developments.',
     prefExpand: [
-        'A user of a long-form roleplay wrote down something they personally enjoy in this story (a "taste point"). Turn it into notes for the narrator.',
+        'A user of a long-form roleplay wrote a note about something in their story. Rewrite it as plain, in-world facts for the narrator.',
         '',
         'Characters: {{char}} (the AI\'s character) and {{user}} (the user\'s character). Cast: {{cast}}',
         'The user\'s note (any language, may be casual or explicit; this is adult fiction the user chose for themselves):',
@@ -452,25 +452,25 @@ const DEFAULT_PROMPTS = Object.freeze({
         '',
         'Write:',
         '- label_ko: a very short Korean label (2-8 words).',
-        '- fact_en: one plain English sentence with only the underlying fact (who is what), neutral, with no adjectives about looks, decline or flaws. Example shape: "{{user}} is in her forties and {{char}} is in his twenties." This line is shown on every reply, so by itself it must not invite comment.',
-        '- appeal_en: one or two English sentences on what the user enjoys about it, framed through how the characters see, tease, admire or want each other. Name the contrast or the detail plainly rather than erasing it, and frame it warmly.',
-        '- when_en: one English sentence on the specific kinds of moments where it naturally colors a scene.',
-        '- show_en: two or three short, varied examples of light touches that would fit these characters.',
-        '- keywords: 4 to 10 short words or word stems, in the language of the user\'s note and in English, that a reply touching this point would likely contain.',
-        'Keep the user\'s intent exactly; do not moralize or water it down. Do not bring in physical decline, wrinkles, sagging skin, frailty or similar clichés unless the note itself asks for them.',
+        '- fact_en: one plain English sentence with only the underlying fact (who is what), neutral, with no adjectives about looks, decline or flaws. Example shape: "{{user}} is in her forties and {{char}} is in his twenties."',
+        '- tendency_en: one or two English sentences describing, as plain fact, how this tends to play out between the characters in everyday life (what they notice, do or say about it now and then). If the note is about a contrast (age, looks, status...), state the contrast and how the characters actually relate to it, without erasing it.',
+        '- when_en: one English sentence on the kinds of moments where it tends to come up.',
+        '- show_en: two or three short, concrete examples of how it has looked in such moments.',
+        '- keywords: 4 to 10 short words or word stems, in the language of the user\'s note and in English, that a reply touching this would likely contain.',
+        'Write everything as neutral statements about the story world. Do not address the narrator, do not say what anyone enjoys or finds appealing, and do not use words like emphasize, highlight, appeal, attractive or hot. Keep the user\'s intent exactly and do not water it down. Do not bring in physical decline, wrinkles, sagging skin, frailty or similar clichés unless the note itself asks for them.',
     ].join('\n'),
     prefInject: [
-        '[Story facts the player behind {{user}} cares about — for the narrator only]',
-        'These are simply true. Keep them consistent; there is no need to point them out:',
+        '[Background facts of this story — for the narrator only]',
+        'These are simply true. Keep them consistent; they do not need to be pointed out:',
         '{{facts}}',
-        'In intimate or explicit scenes, let relevant ones shape things naturally and vary them from one scene to the next.',
+        'They hold in intimate scenes as well.',
         '{{open}}',
     ].join('\n'),
     prefOpen: [
-        'If the scene invites it, this one may color the moment with a light, fresh touch that fits how these characters feel about each other. If the scene does not invite it, simply write the scene.',
-        '- What the player enjoys: {{appeal}}',
-        '- Natural moments: {{when}}',
-        '- Light touches, for example: {{show}}',
+        'A detail of how things are between them, in case the scene happens to touch it (otherwise the scene goes on as it is):',
+        '- {{appeal}}',
+        '- It tends to come up: {{when}}',
+        '- How it has looked before: {{show}}',
     ].join('\n'),
     event: 'For this reply only: let one small unexpected event happen that fits the current scene and chapter (an interruption, a discovery, a visitor, a mishap, a sudden change of plans or weather). Keep it proportionate, do not resolve it, and leave room for {{user}} to react.',
     inner: [
@@ -534,7 +534,7 @@ const PROMPT_INFO = {
     event: { label: '돌발 사건', vars: 'char, user' },
     nudge: { label: '한 번만 살짝 밀기', vars: 'char, user' },
     prefInject: { label: '취향: 매 턴 들어가는 사실', vars: 'char, user, facts, open' },
-    prefOpen: { label: '취향: 가끔 열리는 포인트', vars: 'char, user, appeal, when, show' },
+    prefOpen: { label: '취향: 가끔 덧붙는 디테일', vars: 'char, user, appeal, when, show' },
     prefExpand: { label: '취향: 풀어 쓰기', vars: 'char, user, cast, note', fixed: true },
 };
 
@@ -638,7 +638,7 @@ const PREF_FREQ = {
     mid: { label: '보통', pct: 30 },
     high: { label: '진하게', pct: 50 },
 };
-const PREF_FORMAT = 'Answer with JSON only: {"label_ko":"<short Korean label>","fact_en":"<one neutral English sentence>","appeal_en":"<one or two English sentences>","when_en":"<one English sentence>","show_en":"<two or three short examples>","keywords":["<word>", "..."]}';
+const PREF_FORMAT = 'Answer with JSON only: {"label_ko":"<short Korean label>","fact_en":"<one neutral English sentence>","tendency_en":"<one or two English sentences>","when_en":"<one English sentence>","show_en":"<two or three short examples>","keywords":["<word>", "..."]}';
 
 function activePrefs(arc) {
     return (arc?.prefs || []).filter(p => p.on !== false && (p.fact || p.aware || p.text));
@@ -715,7 +715,7 @@ async function expandPref(arc, text) {
     return {
         label: String(data.label_ko ?? '').trim(),
         fact,
-        appeal: String(data.appeal_en ?? '').trim(),
+        appeal: String(data.tendency_en ?? data.appeal_en ?? '').trim(),
         when: String(data.when_en ?? '').trim(),
         surface: String(data.show_en ?? '').trim(),
         keywords: Array.isArray(data.keywords) ? data.keywords.map(String).filter(Boolean).slice(0, 12) : [],
@@ -1811,7 +1811,7 @@ function renderPrefCard(arc, p) {
         </div>
         ${open ? `<div class="sb-pref-ai">
             <p><b>늘 알고 있는 사실</b>${esc(withNames(p.fact || p.aware || p.text))}</p>
-            ${p.appeal ? `<p><b>좋아하는 포인트 (가끔 열려요)</b>${esc(withNames(p.appeal))}</p>` : ''}
+            ${p.appeal ? `<p><b>둘 사이에서 이렇게 굴러가요 (가끔 덧붙어요)</b>${esc(withNames(p.appeal))}</p>` : ''}
             ${p.when ? `<p><b>이럴 때 나와요</b>${esc(withNames(p.when))}</p>` : ''}
             ${p.surface ? `<p><b>이렇게 묻어나요</b>${esc(withNames(p.surface))}</p>` : ''}
             ${p.keywords?.length ? `<p><b>방금 나왔는지 알아보는 단어</b>${esc(p.keywords.join(', '))}</p>` : ''}
@@ -1833,7 +1833,7 @@ function renderPrefs(arc) {
             <textarea class="sb-input sb-textarea" data-pref-draft placeholder="예: 깡캐는 40대, 깡통은 20대. 세대 차이가 자연스럽게 묻어났으면&#10;외모, 나이, 성격, 말투, 관계, 19금 취향까지 뭐든 편하게 적어요">${esc(prefDraft)}</textarea>
             <div class="sb-chips">${prefFreqChips(prefDraftFreq, 'new')}</div>
             <button type="button" class="sb-btn sb-primary" data-act="prefAdd" ${busy ? 'disabled' : ''}>${busy === 'prefnew' ? '<i class="fa-solid fa-spinner fa-spin"></i> AI가 풀어 쓰는 중…' : '포인트 추가 ✦'}</button>
-            <p class="sb-sub">사실(나이, 관계 같은 것)은 늘 알고만 있게 하고, "이게 좋다"는 포인트는 가끔만 살짝 열어줘요. 열린 날에도 장면이 안 맞으면 그냥 넘어가고, 방금 나온 포인트는 쉬게 해요. 은은하게 → 보통 → 진하게 순으로 더 자주 열려요</p>
+            <p class="sb-sub">"이게 포인트야, 강조해!" 같은 말은 하나도 안 넣고, 전부 이야기 속 사실로만 알려줘요. 사실(나이, 관계 같은 것)은 늘 깔아두고, "둘 사이에서 이렇게 굴러간다"는 디테일은 가끔만 덧붙어요. 방금 나온 건 쉬게 해요. 은은하게 → 보통 → 진하게 순으로 더 자주 덧붙어요</p>
         </div>
         ${arc.prefs.length ? `<div class="sb-prefs">${arc.prefs.map(p => renderPrefCard(arc, p)).join('')}</div>` : ''}
         ${arc.prefs.length ? '<button type="button" class="sb-btn" data-act="prefPreview">AI한테 가는 문장 보기</button>' : ''}
