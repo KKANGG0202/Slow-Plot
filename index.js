@@ -453,11 +453,11 @@ const DEFAULT_PROMPTS = Object.freeze({
         'Write:',
         '- label_ko: a very short Korean label (2-8 words).',
         '- fact_en: one plain English sentence with only the underlying fact (who is what), neutral, with no adjectives about looks, decline or flaws. Example shape: "{{user}} is in her forties and {{char}} is in his twenties."',
-        '- tendency_en: one or two English sentences describing, as plain fact, how this tends to play out between the characters in everyday life (what they notice, do or say about it now and then). If the note is about a contrast (age, looks, status...), state the contrast and how the characters actually relate to it, without erasing it.',
+        '- tendency_en: one or two English sentences describing, as plain fact, the concrete everyday situations where this is visible (differences that show up in talk, habits, references, bodies or circumstances). If the note is about a contrast (age, looks, status...), state the contrast itself plainly, without erasing it.',
         '- when_en: one English sentence on the kinds of moments where it tends to come up.',
         '- show_en: two or three short, concrete examples of how it has looked in such moments.',
         '- keywords: 4 to 10 short words or word stems, in the language of the user\'s note and in English, that a reply touching this would likely contain.',
-        'Write everything as neutral statements about the story world. Do not address the narrator, do not say what anyone enjoys or finds appealing, and do not use words like emphasize, highlight, appeal, attractive or hot. Keep the user\'s intent exactly and do not water it down. Do not bring in physical decline, wrinkles, sagging skin, frailty or similar clichés unless the note itself asks for them.',
+        'This note reflects the user\'s own taste as a reader, not the characters\' tastes. Never claim that {{char}} or anyone else likes, prefers, is drawn to or is bothered by it, and do not invent feelings about it for any character; how they react is left to their own personalities. Write everything as neutral statements about the story world. Do not address the narrator, do not say what anyone enjoys or finds appealing, and do not use words like emphasize, highlight, appeal, attractive or hot. Keep the user\'s intent exactly and do not water it down. Do not bring in physical decline, wrinkles, sagging skin, frailty or similar clichés unless the note itself asks for them.',
     ].join('\n'),
     prefInject: [
         '[Background facts of this story — for the narrator only]',
@@ -467,7 +467,7 @@ const DEFAULT_PROMPTS = Object.freeze({
         '{{open}}',
     ].join('\n'),
     prefOpen: [
-        'A detail of how things are between them, in case the scene happens to touch it (otherwise the scene goes on as it is):',
+        'A detail of how things are, in case the scene happens to touch it (otherwise the scene goes on as it is). How each character feels about it is up to their own personality:',
         '- {{appeal}}',
         '- It tends to come up: {{when}}',
         '- How it has looked before: {{show}}',
