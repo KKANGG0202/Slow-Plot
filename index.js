@@ -476,7 +476,7 @@ const DEFAULT_PROMPTS = Object.freeze({
         '- {{appeal}}',
         '- It tends to come up: {{when}}',
         '- How it has looked before: {{show}}',
-        'If it does come up, let it live in the narration rather than in someone saying it out loud: where a gaze rests, one or two precise, partial physical details, a gesture, an object, the grain of a voice. A small exact detail beats a full description or a remark about it.',
+        'If it does come up, it usually lives best in the narration: where a gaze rests, one or two precise, partial physical details, a gesture, an object, the grain of a voice. A small exact detail beats a full description. A line of dialogue is just as welcome when a character would naturally say it in that moment.',
     ].join('\n'),
     event: 'For this reply only: let one small unexpected event happen that fits the current scene and chapter (an interruption, a discovery, a visitor, a mishap, a sudden change of plans or weather). Keep it proportionate, do not resolve it, and leave room for {{user}} to react.',
     inner: [
