@@ -452,6 +452,7 @@ const DEFAULT_PROMPTS = Object.freeze({
         'Write:',
         '- label_ko: a very short Korean label (2-8 words) for this point.',
         '- aware_en: one English sentence the narrator keeps in mind at all times: the fact itself and what makes it appealing to the user. The appeal often lies in a contrast, a tension or a specific detail; name it plainly instead of softening or erasing it.',
+        '- when_en: one English sentence on the kinds of moments where it naturally comes up (concrete situations, topics or scene types), so the narrator can recognise an opening from context.',
         '- surface_en: two or three English sentences on natural, varied ways it can show when a scene invites it (a line of dialogue, a glance, a passing thought, a small detail of behavior, a choice made in the moment), fitting these characters.',
         '- avoid_en: one English sentence on what would ruin it, such as repeating the same phrase, exaggeration or caricature, bringing it up every reply, ignoring it where it obviously matters, or forcing it into scenes where it does not belong.',
         'Keep the user\'s intent exactly. Do not moralize, censor or water it down.',
@@ -460,12 +461,12 @@ const DEFAULT_PROMPTS = Object.freeze({
         '[What the player behind {{user}} enjoys in this story — for the narrator only]',
         'Keep these in mind at all times. They are seasoning, not the plot:',
         '{{points}}',
-        '- Never quote or paraphrase these notes, and do not bring them up in every reply; most replies should not touch them at all.',
-        '- When one does come up, keep it brief and natural, worded differently each time, arising from the scene itself, never exaggerated.',
+        'How to use them:',
+        '- Read the current scene. When it opens a door to one of these (the moment, topic or kind of scene described above), let it show in a brief, natural touch: a line, a glance, a thought, a small choice. When nothing in the scene invites it, leave it out.',
+        '- Never quote or paraphrase these notes, and never bring one up just to tick it off; most replies touch none of them, and the same one should not appear in back-to-back replies unless the scene is really about it.',
+        '- Vary the wording and the angle each time, and never exaggerate or caricature.',
         '- The same goes for intimate or explicit scenes: let a relevant preference shape them naturally and vary it over time instead of forcing it.',
-        '{{cue}}',
     ].join('\n'),
-    prefCue: 'For this reply: if the moment genuinely invites it, let this one surface briefly (a line or a detail at most): {{surface}} Avoid: {{avoid}} If it does not fit the scene, skip it.',
     event: 'For this reply only: let one small unexpected event happen that fits the current scene and chapter (an interruption, a discovery, a visitor, a mishap, a sudden change of plans or weather). Keep it proportionate, do not resolve it, and leave room for {{user}} to react.',
     inner: [
         'Read the recent roleplay and describe what {{char}} is privately feeling right now about {{user}} and the situation: the thoughts {{char}} would never say out loud.',
@@ -527,8 +528,7 @@ const PROMPT_INFO = {
     breather: { label: '숨 고르기 턴', vars: 'char, user' },
     event: { label: '돌발 사건', vars: 'char, user' },
     nudge: { label: '한 번만 살짝 밀기', vars: 'char, user' },
-    prefInject: { label: '취향: 매 턴 들어가는 문장', vars: 'char, user, points, cue' },
-    prefCue: { label: '취향: 가끔 한 번 묻어나게', vars: 'char, user, surface, avoid' },
+    prefInject: { label: '취향: 매 턴 들어가는 문장', vars: 'char, user, points' },
     prefExpand: { label: '취향: 풀어 쓰기', vars: 'char, user, cast, note', fixed: true },
 };
 
@@ -625,34 +625,16 @@ const AUTO_EVENT_CHANCE = 0.12;
 // ---------- taste points ----------
 
 const PREF_KEY = MODULE + '_prefs';
+// How readily a point takes an opening. No fixed schedule: the scene decides.
 const PREF_FREQ = {
-    low: { label: '은은하게', every: 8 },
-    mid: { label: '가끔', every: 5 },
-    high: { label: '자주', every: 3 },
+    low: { label: '은은하게', en: 'Only when the scene clearly calls for it.' },
+    mid: { label: '보통', en: 'When a natural opening comes up.' },
+    high: { label: '진하게', en: 'Take even small openings, though still not every reply.' },
 };
-const PREF_FORMAT = 'Answer with JSON only: {"label_ko":"<short Korean label>","aware_en":"<one English sentence>","surface_en":"<two or three English sentences>","avoid_en":"<one English sentence>"}';
+const PREF_FORMAT = 'Answer with JSON only: {"label_ko":"<short Korean label>","aware_en":"<one English sentence>","when_en":"<one English sentence>","surface_en":"<two or three English sentences>","avoid_en":"<one English sentence>"}';
 
 function activePrefs(arc) {
     return (arc?.prefs || []).filter(p => p.on !== false && (p.aware || p.text));
-}
-
-function prefOffset(id) {
-    let h = 0;
-    for (const ch of String(id)) h = (h * 31 + ch.charCodeAt(0)) % 997;
-    return h;
-}
-
-// Which point (if any) gets a gentle cue for reply number `turn`. Pure function of the turn,
-// so regenerating the same reply gets the same cue. Cues only land on every other reply,
-// so several points never pile up into a cue on every turn.
-function prefCueFor(arc, turn) {
-    if (turn % 2) return null;
-    const due = activePrefs(arc).filter(p => {
-        const every = (PREF_FREQ[p.freq] || PREF_FREQ.mid).every;
-        const off = prefOffset(p.id);
-        return (turn + off) % every === 0 || (turn - 1 + off) % every === 0;
-    });
-    return due.length ? due[(turn / 2) % due.length] : null;
 }
 
 // AI-written guidance may use {{user}} / {{char}}; fill them in ourselves.
@@ -665,17 +647,14 @@ function buildPrefInjection(arc) {
     const c = ctx();
     const prefs = activePrefs(arc);
     if (!prefs.length) return '';
-    const base = { char: c.name2, user: c.name1 };
-    const cue = prefCueFor(arc, messageCount() + 1);
-    return fillTemplate(getPrompt('prefInject'), {
-        ...base,
-        points: prefs.map(p => `- ${withNames(p.aware || p.text)}`).join('\n'),
-        cue: cue ? fillTemplate(getPrompt('prefCue'), {
-            ...base,
-            surface: withNames(cue.surface || cue.aware || cue.text),
-            avoid: withNames(cue.avoid || 'repeating the same phrase, exaggerating it, or forcing it.'),
-        }) : '',
-    });
+    const points = prefs.map(p => [
+        `- ${withNames(p.aware || p.text)}`,
+        p.when ? `  Comes up when: ${withNames(p.when)}` : '',
+        p.surface ? `  Can show as: ${withNames(p.surface)}` : '',
+        p.avoid ? `  Avoid: ${withNames(p.avoid)}` : '',
+        `  How readily: ${(PREF_FREQ[p.freq] || PREF_FREQ.mid).en}`,
+    ].filter(Boolean).join('\n')).join('\n');
+    return fillTemplate(getPrompt('prefInject'), { char: c.name2, user: c.name1, points });
 }
 
 function updatePrefInjection() {
@@ -701,6 +680,7 @@ async function expandPref(arc, text) {
     return {
         label: String(data.label_ko ?? '').trim(),
         aware,
+        when: String(data.when_en ?? '').trim(),
         surface: String(data.surface_en ?? '').trim(),
         avoid: String(data.avoid_en ?? '').trim(),
         failed: false,
@@ -1794,7 +1774,8 @@ function renderPrefCard(arc, p) {
         </div>
         ${open ? `<div class="sb-pref-ai">
             <p><b>늘 알고 있는 것</b>${esc(withNames(p.aware || p.text))}</p>
-            ${p.surface ? `<p><b>묻어날 때</b>${esc(withNames(p.surface))}</p>` : ''}
+            ${p.when ? `<p><b>이럴 때 나와요</b>${esc(withNames(p.when))}</p>` : ''}
+            ${p.surface ? `<p><b>이렇게 묻어나요</b>${esc(withNames(p.surface))}</p>` : ''}
             ${p.avoid ? `<p><b>피할 것</b>${esc(withNames(p.avoid))}</p>` : ''}
         </div>` : ''}
     </div>`;
@@ -1813,7 +1794,7 @@ function renderPrefs(arc) {
             <textarea class="sb-input sb-textarea" data-pref-draft placeholder="예: 깡캐는 40대, 깡통은 20대. 세대 차이가 자연스럽게 묻어났으면&#10;외모, 나이, 성격, 말투, 관계, 19금 취향까지 뭐든 편하게 적어요">${esc(prefDraft)}</textarea>
             <div class="sb-chips">${prefFreqChips(prefDraftFreq, 'new')}</div>
             <button type="button" class="sb-btn sb-primary" data-act="prefAdd" ${busy ? 'disabled' : ''}>${busy === 'prefnew' ? '<i class="fa-solid fa-spinner fa-spin"></i> AI가 풀어 쓰는 중…' : '포인트 추가 ✦'}</button>
-            <p class="sb-sub">늘 알고는 있고, 은은하게는 약 8답변, 가끔은 약 5답변, 자주는 약 3~4답변에 한 번 "어울리면 한 줄" 신호가 가요. 안 어울리면 그냥 넘어가요</p>
+            <p class="sb-sub">정해진 횟수 없이 지금 장면을 보고 어울릴 때만 나와요. 은은하게는 장면이 확실히 그쪽일 때만, 보통은 자연스러운 틈이 오면, 진하게는 작은 틈에도 (그래도 매번은 아니게)</p>
         </div>
         ${arc.prefs.length ? `<div class="sb-prefs">${arc.prefs.map(p => renderPrefCard(arc, p)).join('')}</div>` : ''}
         ${arc.prefs.length ? '<button type="button" class="sb-btn" data-act="prefPreview">AI한테 가는 문장 보기</button>' : ''}
@@ -2432,7 +2413,7 @@ async function onPrefClick(act, val) {
             Object.assign(p, await expandPref(arc, p.text));
         } catch (err) {
             console.error(LOG, 'pref expand failed', err);
-            Object.assign(p, { label: p.label || '', aware: '', surface: '', avoid: '', failed: true });
+            Object.assign(p, { label: p.label || '', aware: '', when: '', surface: '', avoid: '', failed: true });
             toastr.warning('풀어 쓰기 실패: ' + err.message + ' · 일단 적은 문장 그대로 넣을게요', 'Slow Plot');
         } finally { busy = ''; }
     };
