@@ -460,16 +460,17 @@ const DEFAULT_PROMPTS = Object.freeze({
     ].join('\n'),
     prefInject: [
         '[Taste notes from the player behind {{user}} — for the narrator only]',
-        'Background things the player enjoys in this story. They are seasoning, not the plot, and most replies use none of them:',
+        'Things the player enjoys in this story. They are seasoning: they color moments, they do not steer the plot.',
         '{{points}}',
         '',
-        'Before letting any of these into a reply, check silently (in your private reasoning if you have one; never write the check into the reply):',
-        '1. Is the scene right now actually about this point\'s moment or topic? "It could be tied in" does not count.',
-        '2. Has it shown up in any of the last three replies? If yes, skip it.',
-        '3. Would this reply feel off or flat without it? If not, skip it.',
-        'Use a point only when its readiness level below is met; otherwise leave it out completely. When one passes, give it one brief touch (a line, a glance, a thought), worded differently from before, never exaggerated, never quoting these notes.',
-        'Readiness: "strict" needs 1, 2 and 3; "normal" needs 1 and 2, and only one point per reply; "eager" needs 2, and 1 may be a natural opening rather than the main topic.',
-        'Intimate or explicit scenes follow the same check: let a relevant preference shape them naturally and vary it from one scene to the next instead of repeating it.',
+        'Taste check (run it inside your private planning or thinking if you have one; never write it into the story):',
+        '- [ ] Does the moment I am about to write naturally touch one of these, through the characters\' own feelings, habits or situation, rather than because I am looking for a place to insert it?',
+        '- [ ] If so, can it show as something small and alive (a line, a look, a thought, a choice) that fits who these characters are right now?',
+        '- [ ] Have I been leaning on the same one, or the same wording, lately? If so, let it rest or find a fresh angle.',
+        '- [ ] Am I keeping it in proportion: no caricature, no exaggeration, never echoing these notes?',
+        'When the scene gives one a real opening, take it with confidence and make it feel lived-in. When it does not, leave it out without forcing it.',
+        'Readiness: "strict" means only when the moment is plainly about it; "normal" means when a real opening appears; "eager" means smaller openings are welcome too, but never by force.',
+        'Intimate or explicit scenes follow the same check: let a relevant preference shape them naturally and vary it from scene to scene.',
     ].join('\n'),
     event: 'For this reply only: let one small unexpected event happen that fits the current scene and chapter (an interruption, a discovery, a visitor, a mishap, a sudden change of plans or weather). Keep it proportionate, do not resolve it, and leave room for {{user}} to react.',
     inner: [
@@ -1799,7 +1800,7 @@ function renderPrefs(arc) {
             <textarea class="sb-input sb-textarea" data-pref-draft placeholder="예: 깡캐는 40대, 깡통은 20대. 세대 차이가 자연스럽게 묻어났으면&#10;외모, 나이, 성격, 말투, 관계, 19금 취향까지 뭐든 편하게 적어요">${esc(prefDraft)}</textarea>
             <div class="sb-chips">${prefFreqChips(prefDraftFreq, 'new')}</div>
             <button type="button" class="sb-btn sb-primary" data-act="prefAdd" ${busy ? 'disabled' : ''}>${busy === 'prefnew' ? '<i class="fa-solid fa-spinner fa-spin"></i> AI가 풀어 쓰는 중…' : '포인트 추가 ✦'}</button>
-            <p class="sb-sub">정해진 횟수 없이, 답변 쓰기 전에 AI가 속으로 체크해요: ① 지금 장면이 진짜 그 얘기인지 ② 최근 3답변 안에 나왔는지 ③ 빼면 어색한지. 은은하게는 셋 다, 보통은 ①②, 진하게는 ②만 통과하면 나와요</p>
+            <p class="sb-sub">정해진 횟수 없이, 답변 쓰기 전에 AI가 속으로 체크해요: 지금 장면이 자연스럽게 닿아 있는지, 작고 살아 있게 보여줄 수 있는지, 요즘 같은 걸 너무 우려먹진 않았는지, 과하지 않은지. 은은하게는 장면이 딱 그 얘기일 때만, 보통은 진짜 틈이 생기면, 진하게는 작은 틈도 반갑게 (억지로는 X)</p>
         </div>
         ${arc.prefs.length ? `<div class="sb-prefs">${arc.prefs.map(p => renderPrefCard(arc, p)).join('')}</div>` : ''}
         ${arc.prefs.length ? '<button type="button" class="sb-btn" data-act="prefPreview">AI한테 가는 문장 보기</button>' : ''}
