@@ -97,6 +97,8 @@ function newArc() {
         log: [],
         prefsOn: true,        // taste points on for this chat
         prefs: [],            // taste points: { id, text, label, fact, appeal, when, surface, keywords[], freq, on, failed }
+        motifsOn: true,       // "let it rest" for motifs the narration keeps returning to
+        motifs: [],           // { id, text, keywords[], level, on }
     };
 }
 
@@ -443,6 +445,26 @@ const DEFAULT_PROMPTS = Object.freeze({
     foreshadow: 'Foreshadowing: if it fits naturally, let this small detail surface in passing, without explaining it or drawing attention to it: {{seed}}',
     breather: 'This reply is a breather. Do not push the story\'s direction at all; let the moment be ordinary and unhurried, following whatever {{user}} is doing.',
     nudge: 'For this reply only: if the scene allows it at all, move this chapter forward by one clear, believable step. Still follow {{user}}\'s lead and do not jump ahead to later developments.',
+    motifRest: [
+        '[Narration note for this reply]',
+        'These came up in the latest replies: {{motifs}}.',
+        'Let them rest in this reply. They are still there and still matter, but leave them unmentioned unless this exact moment turns on them (someone touches, removes, damages or talks about them, or they decide what happens next). Give the attention to other details of the scene instead.',
+    ].join('\n'),
+    motifKeywords: [
+        'A roleplay keeps returning to the same motif. List the words a reply would use when it mentions this motif, so repeated mentions can be noticed.',
+        '',
+        'Motif (written by the user): {{motif}}',
+        'Language sample from the chat: {{sample}}',
+        '',
+        'Give 4 to 12 short words or word stems: the motif itself, common synonyms and closely tied words (for a ring: ring, band, finger it sits on), in the chat\'s language and in English. Prefer stems that still match when grammatical endings are attached.',
+    ].join('\n'),
+    motifFind: [
+        'Below are the latest replies of a roleplay narrator. Find concrete motifs the narration keeps returning to across several replies: objects, symbols, body details or sensations (for example a ring, a collar, a scar, a smell), not the characters themselves and not ordinary words.',
+        '',
+        '{{replies}}',
+        '',
+        'List up to 5, most repeated first. For each, give a short Korean name and 4 to 10 words or stems (in the replies\' language and in English) that mark a mention.',
+    ].join('\n'),
     prefExpand: [
         'A user of a long-form roleplay wrote a note about something in their story. Rewrite it as plain, in-world facts for the narrator.',
         '',
@@ -541,6 +563,9 @@ const PROMPT_INFO = {
     nudge: { label: '한 번만 살짝 밀기', vars: 'char, user' },
     prefInject: { label: '취향: 매 턴 들어가는 사실', vars: 'char, user, facts, open' },
     prefOpen: { label: '취향: 가끔 덧붙는 디테일', vars: 'char, user, appeal, when, show' },
+    motifRest: { label: '쉬게 하기: 방금 나온 것', vars: 'char, user, motifs' },
+    motifKeywords: { label: '쉬게 하기: 감지 단어 만들기', vars: 'motif, sample', fixed: true },
+    motifFind: { label: '쉬게 하기: 반복되는 것 찾기', vars: 'replies', fixed: true },
     prefExpand: { label: '취향: 풀어 쓰기', vars: 'char, user, cast, note', fixed: true },
 };
 
@@ -666,7 +691,7 @@ function roll(seed) {
 function prefRecentlyUsed(p) {
     const words = (p.keywords || []).map(w => String(w).trim().toLowerCase()).filter(w => w.length >= 2);
     if (!words.length) return false;
-    const recent = ctx().chat.filter(isBotReply).slice(-2).map(m => String(m.mes || '').toLowerCase()).join('\n');
+    const recent = recentBotTexts(2).join('\n');
     return words.some(w => recent.includes(w));
 }
 
@@ -730,8 +755,87 @@ async function expandPref(arc, text) {
     };
 }
 
+// ---------- let a motif rest ----------
+
+const REST_KEY = MODULE + '_rest';
+// How soon a motif is asked to rest after showing up.
+const MOTIF_LEVEL = {
+    loose: { label: '느슨하게', window: 3, hits: 2, hint: '최근 3답변 중 2번 나오면 쉬어요' },
+    normal: { label: '보통', window: 1, hits: 1, hint: '방금 나왔으면 다음 답변은 쉬어요' },
+    strict: { label: '빡세게', window: 3, hits: 1, hint: '최근 3답변 안에 나왔으면 쉬어요' },
+};
+let motifDraft = '';
+let motifDraftLevel = 'normal';
+let motifSuggest = [];   // [{ name, keywords }] from "find what repeats"
+
+function stripThinking(text) {
+    return String(text || '').replace(/<(thinking|think)>[\s\S]*?<\/\1>/gi, '');
+}
+
+let genType = '';   // type of the generation being prepared ('swipe' means the last reply is being replaced)
+
+function recentBotTexts(n) {
+    let bots = ctx().chat.filter(isBotReply);
+    // On a swipe the reply being replaced is still in the chat; it is not "the previous reply".
+    if (genType === 'swipe' && ctx().chat.length && isBotReply(ctx().chat[ctx().chat.length - 1])) bots = bots.slice(0, -1);
+    return bots.slice(-n).map(m => stripThinking(m.mes).toLowerCase());
+}
+
+function motifHits(m, n) {
+    const words = (m.keywords?.length ? m.keywords : [m.text]).map(w => String(w).trim().toLowerCase()).filter(w => w.length >= 1);
+    return recentBotTexts(n).filter(t => words.some(w => t.includes(w))).length;
+}
+
+function motifResting(m) {
+    const lv = MOTIF_LEVEL[m.level] || MOTIF_LEVEL.normal;
+    return motifHits(m, lv.window) >= lv.hits;
+}
+
+function buildRestInjection(arc) {
+    if (arc.motifsOn === false) return '';
+    const resting = (arc.motifs || []).filter(m => m.on !== false && motifResting(m));
+    if (!resting.length) return '';
+    const c = ctx();
+    return fillTemplate(getPrompt('motifRest'), { char: c.name2, user: c.name1, motifs: resting.map(m => m.text).join(', ') });
+}
+
+function updateRestInjection() {
+    const { setExtensionPrompt } = ctx();
+    const s = getSettings();
+    const arc = hasChat() ? getArc() : null;
+    const text = s.enabled && arc ? buildRestInjection(arc) : '';
+    if (!text) { setExtensionPrompt(REST_KEY, '', PROMPT_NONE, 0); return; }
+    // Close to the latest message: it is about this one reply.
+    setExtensionPrompt(REST_KEY, text, PROMPT_IN_CHAT, 1, false, ROLES.system ?? 0);
+}
+
+function chatSample() {
+    const last = ctx().chat.filter(isBotReply).slice(-1)[0];
+    return clip(stripThinking(last?.mes || ''), 300);
+}
+
+async function motifKeywords(text) {
+    const prompt = fillTemplate(getPrompt('motifKeywords'), { motif: text, sample: chatSample() })
+        + '\n\nAnswer with JSON only: {"keywords":["<word>", "..."]}';
+    const data = parseJson(await askLLM('You list search words. Output only valid JSON.', prompt, 400));
+    const list = Array.isArray(data.keywords) ? data.keywords : Array.isArray(data) ? data : [];
+    return [...new Set([text, ...list.map(String)].map(w => w.trim()).filter(Boolean))].slice(0, 14);
+}
+
+async function findMotifs() {
+    const texts = ctx().chat.filter(isBotReply).slice(-8).map((m, i) => `Reply ${i + 1}:\n${clip(stripThinking(m.mes), 1500)}`);
+    if (texts.length < 3) throw new Error('답변이 3개 이상 있어야 찾을 수 있어요');
+    const prompt = fillTemplate(getPrompt('motifFind'), { replies: texts.join('\n\n') })
+        + '\n\nAnswer with JSON only: {"motifs":[{"name_ko":"<short Korean name>","keywords":["<word>", "..."]}]}';
+    const data = parseJson(await askLLM('You analyse prose for repetition. Output only valid JSON.', prompt, 800));
+    return (Array.isArray(data.motifs) ? data.motifs : [])
+        .map(m => ({ name: String(m.name_ko ?? '').trim(), keywords: (Array.isArray(m.keywords) ? m.keywords : []).map(String).filter(Boolean) }))
+        .filter(m => m.name);
+}
+
 function updateInjection() {
     updatePrefInjection();
+    updateRestInjection();
     const { setExtensionPrompt } = ctx();
     const s = getSettings();
     const arc = hasChat() ? getArc() : null;
@@ -1843,6 +1947,49 @@ function renderPrefs(arc) {
         </div>
         ${arc.prefs.length ? `<div class="sb-prefs">${arc.prefs.map(p => renderPrefCard(arc, p)).join('')}</div>` : ''}
         ${arc.prefs.length ? '<button type="button" class="sb-btn" data-act="prefPreview">AI한테 가는 문장 보기</button>' : ''}
+    </div>
+    ${renderMotifs(arc)}`;
+}
+
+function motifLevelChips(cur, id) {
+    return Object.entries(MOTIF_LEVEL).map(([k, l]) => `<button type="button" class="sb-chip${cur === k ? ' on' : ''}" data-act="motifLevel" data-value="${id}:${k}">${l.label}</button>`).join('');
+}
+
+function renderMotifs(arc) {
+    const on = arc.motifsOn !== false;
+    const have = new Set((arc.motifs || []).map(m => m.text));
+    return `
+    <div class="sb-card">
+        <label class="sb-switch-line">
+            <span><b>🔁 자꾸 나오는 것 쉬게 하기</b><span class="sb-sub sb-block">이 채팅방에만 적용돼요</span></span>
+            <span class="sb-switch"><input id="sb_motifs_on" type="checkbox" ${on ? 'checked' : ''}><span class="sb-track"><span class="sb-knob"></span></span></span>
+        </label>
+        <p class="sb-sub">반지, 목줄, 흉터처럼 의미 있는 상징물을 AI가 매 답변 우려먹을 때 써요. 방금 나왔으면 다음 답변에선 쉬라고 살짝 알려주고, 쉬는 동안에도 그게 진짜 중요한 순간(만지거나, 빼거나, 그 얘기를 하거나)엔 그대로 나와요. 아예 금지하는 게 아니에요.</p>
+        <div class="sb-pref-add">
+            <input class="sb-input" data-motif-draft placeholder="예: 결혼반지, 목줄" value="${esc(motifDraft)}">
+            <div class="sb-chips">${motifLevelChips(motifDraftLevel, 'new')}</div>
+            <p class="sb-sub">${esc((MOTIF_LEVEL[motifDraftLevel] || MOTIF_LEVEL.normal).hint)}</p>
+            <div class="sb-row">
+                <button type="button" class="sb-btn sb-primary sb-grow" data-act="motifAdd" ${busy ? 'disabled' : ''}>${busy === 'motifnew' ? '<i class="fa-solid fa-spinner fa-spin"></i> 감지 단어 만드는 중…' : '추가'}</button>
+                <button type="button" class="sb-btn" data-act="motifFind" ${busy ? 'disabled' : ''}>${busy === 'motiffind' ? '<i class="fa-solid fa-spinner fa-spin"></i> 찾는 중…' : '🔍 반복되는 거 찾아줘'}</button>
+            </div>
+            ${motifSuggest.length ? `<div class="sb-chips">${motifSuggest.map((m, i) => `<button type="button" class="sb-chip${have.has(m.name) ? ' on' : ''}" data-act="motifTake" data-value="${i}" ${have.has(m.name) ? 'disabled' : ''}>${have.has(m.name) ? '✓' : '+'} ${esc(m.name)}</button>`).join('')}</div><p class="sb-sub">최근 답변에서 자주 나온 것들이에요. 눌러서 추가해요</p>` : ''}
+        </div>
+        ${(arc.motifs || []).map(m => {
+            const resting = on && m.on !== false && motifResting(m);
+            return `
+            <div class="sb-pref${m.on === false ? ' off' : ''}">
+                <div class="sb-pref-head">
+                    <span class="sb-pref-label">${esc(m.text)} ${resting ? '<span class="sb-rest">💤 다음 답변은 쉬어요</span>' : ''}</span>
+                    <label class="sb-switch sb-switch-sm"><input type="checkbox" data-motif-on="${m.id}" ${m.on !== false ? 'checked' : ''}><span class="sb-track"><span class="sb-knob"></span></span></label>
+                </div>
+                <div class="sb-chips">${motifLevelChips(m.level || 'normal', m.id)}</div>
+                <label class="sb-sub sb-block">감지 단어 (쉼표로 구분, 고쳐도 돼요)
+                    <input class="sb-input" data-motif-kw="${m.id}" value="${esc((m.keywords || []).join(', '))}">
+                </label>
+                <div class="sb-row"><span class="sb-grow"></span><button type="button" class="sb-icon sb-icon-del" data-act="motifDel" data-value="${m.id}" aria-label="지우기"><i class="fa-solid fa-trash-can"></i></button></div>
+            </div>`;
+        }).join('')}
     </div>`;
 }
 
@@ -2171,6 +2318,7 @@ async function onClick(e) {
     const val = btn.dataset.value;
     if (act === 'tab') { activeTab = val; render(); return; }
     if (act.startsWith('pref')) { await onPrefClick(act, val); return; }
+    if (act.startsWith('motif')) { await onMotifClick(act, val); return; }
     if (act === 'toggleHide') {
         const arc = getArc();
         const next = !hidingOn(arc);
@@ -2449,6 +2597,59 @@ async function onClick(e) {
     render();
 }
 
+async function onMotifClick(act, val) {
+    const arc = getArc();
+    const addMotif = async (text, level, keywords = null) => {
+        if (arc.motifs.some(m => m.text === text)) { toastr.info('이미 있어요', 'Slow Plot'); return; }
+        const m = { id: Date.now().toString(36), text, level, on: true, keywords: keywords || [text] };
+        arc.motifs.push(m);
+        if (!keywords) {
+            busy = 'motifnew'; render();
+            try { m.keywords = await motifKeywords(text); }
+            catch (err) { console.error(LOG, err); toastr.warning('감지 단어를 못 만들어서 적은 이름만 찾을게요. 직접 고쳐도 돼요', 'Slow Plot'); }
+            finally { busy = ''; }
+        }
+    };
+    switch (act) {
+        case 'motifAdd': {
+            const text = motifDraft.trim();
+            if (!text) { toastr.warning('쉬게 할 걸 먼저 적어주세요', 'Slow Plot'); return; }
+            const parts = text.split(/[,，、]/).map(t => t.trim()).filter(Boolean);
+            motifDraft = '';
+            for (const t of parts) await addMotif(t, motifDraftLevel);
+            break;
+        }
+        case 'motifTake': {
+            const sug = motifSuggest[Number(val)];
+            if (sug) await addMotif(sug.name, 'normal', [...new Set([sug.name, ...sug.keywords])]);
+            break;
+        }
+        case 'motifFind': {
+            busy = 'motiffind'; render();
+            try {
+                motifSuggest = await findMotifs();
+                if (!motifSuggest.length) toastr.info('딱히 반복되는 게 안 보여요', 'Slow Plot');
+            } catch (err) {
+                console.error(LOG, err);
+                toastr.warning('찾기 실패: ' + err.message, 'Slow Plot');
+            } finally { busy = ''; }
+            render();
+            return;
+        }
+        case 'motifLevel': {
+            const [id, lv] = String(val).split(':');
+            if (id === 'new') { motifDraftLevel = lv; render(); return; }
+            const m = arc.motifs.find(x => x.id === id); if (m) m.level = lv;
+            break;
+        }
+        case 'motifDel': arc.motifs = arc.motifs.filter(m => m.id !== val); break;
+        default: return;
+    }
+    save();
+    updateInjection();
+    render();
+}
+
 async function onPrefClick(act, val) {
     const arc = getArc();
     const find = id => arc.prefs.find(p => p.id === id);
@@ -2504,7 +2705,7 @@ async function onPrefClick(act, val) {
         }
         case 'prefShow': prefOpen = prefOpen === val ? null : val; render(); return;
         case 'prefPreview': {
-            const text = buildPrefInjection(arc) || '(켜져 있는 포인트가 없어요)';
+            const text = [buildPrefInjection(arc), buildRestInjection(arc)].filter(Boolean).join('\n\n') || '(켜져 있는 포인트가 없어요)';
             await ctx().Popup.show.text('AI한테 가는 문장 (취향)', `<pre class="sb-pre">${esc(text)}</pre>`);
             return;
         }
@@ -2523,6 +2724,24 @@ function onInput(e) {
         const arc = getArc();
         const p = arc.prefs.find(x => x.id === el.dataset.prefOn);
         if (p) { p.on = el.checked; save(); updateInjection(); render(); }
+        return;
+    }
+    if (el.dataset.motifDraft !== undefined) { motifDraft = el.value; return; }
+    if (el.dataset.motifKw !== undefined) {
+        if (e.type !== 'change') return;
+        const m = getArc().motifs.find(x => x.id === el.dataset.motifKw);
+        if (m) { m.keywords = el.value.split(/[,，、]/).map(w => w.trim()).filter(Boolean); save(); updateInjection(); render(); }
+        return;
+    }
+    if (el.dataset.motifOn !== undefined) {
+        if (e.type !== 'change') return;
+        const m = getArc().motifs.find(x => x.id === el.dataset.motifOn);
+        if (m) { m.on = el.checked; save(); updateInjection(); render(); }
+        return;
+    }
+    if (el.id === 'sb_motifs_on') {
+        if (e.type !== 'change') return;
+        getArc().motifsOn = el.checked; save(); updateInjection(); render();
         return;
     }
     if (el.id === 'sb_prefs_on') {
@@ -2666,9 +2885,11 @@ function refresh() {
     // Only the bot's own replies get the direction: background requests from other
     // extensions (translators, summaries: type 'quiet') and impersonation stay clean.
     eventSource.on(event_types.GENERATION_AFTER_COMMANDS, (type) => {
+        genType = type || '';
         if (type === 'quiet' || type === 'impersonate') {
             ctx().setExtensionPrompt(MODULE, '', PROMPT_NONE, 0);
             ctx().setExtensionPrompt(PREF_KEY, '', PROMPT_NONE, 0);
+            ctx().setExtensionPrompt(REST_KEY, '', PROMPT_NONE, 0);
             return;
         }
         updateInjection();
@@ -2676,6 +2897,7 @@ function refresh() {
     eventSource.on(event_types.MESSAGE_SENT, () => { updateInjection(); softRender(); });
     eventSource.on(event_types.MESSAGE_DELETED, () => { updateInjection(); softRender(); });
     eventSource.on(event_types.MESSAGE_RECEIVED, () => {
+        genType = '';
         afterBotReply();
         updateInjection();
         softRender();
