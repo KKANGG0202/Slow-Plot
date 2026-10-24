@@ -510,3 +510,4 @@
 #sb_root .sb-switch-sm input:checked + .sb-track .sb-knob { left: 19px; }
 #sb_root .sb-rest { font-size: 11px; color: var(--sb-purple); background: #fff; border-radius: 999px; padding: 1px 7px; margin-left: 4px; white-space: nowrap; }
 #sb_root .sb-pref-how { color: var(--sb-purple); font-size: 12px; }
+#sb_root .sb-pref-never { color: #B4532A; font-size: 12px; }

@@ -456,10 +456,10 @@ const DEFAULT_PROMPTS = Object.freeze({
         'Motif (written by the user): {{motif}}',
         'Language sample from the chat: {{sample}}',
         '',
-        'Give 4 to 12 short words or word stems: the motif itself, common synonyms and closely tied words (for a scar: scar, mark, the place it sits), in the chat\'s language and in English. Prefer stems that still match when grammatical endings are attached.',
+        'Give 4 to 12 short words or word stems: the motif itself, common synonyms and closely tied words (for instance, for a scar: scar, mark, the place it sits; this only shows the format), in the chat\'s language and in English. Prefer stems that still match when grammatical endings are attached.',
     ].join('\n'),
     motifFind: [
-        'Below are the latest replies of a roleplay narrator. Find concrete motifs the narration keeps returning to across several replies: objects, symbols, body details or sensations (for example a scar, a scent, an old watch, a sound), not the characters themselves and not ordinary words.',
+        'Below are the latest replies of a roleplay narrator. Find concrete motifs the narration keeps returning to across several replies: objects, symbols, body details or sensations (for instance a scar, a scent, an old watch, a sound; these only show the kind of thing meant, so take the motifs from the replies themselves), not the characters themselves and not ordinary words.',
         '',
         '{{replies}}',
         '',
@@ -474,11 +474,13 @@ const DEFAULT_PROMPTS = Object.freeze({
         '',
         'Write:',
         '- label_ko: a very short Korean label (2-8 words).',
-        '- fact_en: one or two plain English sentences with everything the note states as true (who is what, their situation, and any feeling or attitude the note itself gives a character), neutral, with no added adjectives about looks, decline or flaws. Example shape: "{{user}} is in her forties and {{char}} is in his twenties."',
+        '- fact_en: one or two plain English sentences with everything the note states as true (who is what, their situation, and any feeling or attitude the note itself gives a character), neutral, with no added adjectives about looks, decline or flaws. Shape only, not content: "<name> is <fact>." Build it from the note itself.',
         '- tendency_en: one or two English sentences describing, as plain fact, the concrete everyday situations where this is visible (differences that show up in talk, habits, references, bodies or circumstances). If the note is about a contrast (age, looks, status...), state the contrast itself plainly, without erasing it.',
         '- when_en: one English sentence on the kinds of moments where it tends to come up.',
         '- show_en: two or three short, concrete narrative details of how it has looked in such moments: things that can be seen, touched or heard (a partial physical detail such as hands, hair, skin or the way clothes sit; a gesture; an object; the texture of a voice), rather than lines of dialogue that state it.',
         '- keywords: 4 to 10 short words or word stems, in the language of the user\'s note and in English, that a reply touching this would likely contain.',
+        '- never_en: if the note says what the user never wants, one plain English sentence stating it as something that is not part of this story; otherwise an empty string.',
+        'Any examples in these instructions only show the format. Take every detail from the user\'s note, not from the examples.',
         'Before answering, check each field against this list (silently; output only the JSON):',
         '- [ ] Every sentence describes the story world: who is what, what situations come up, what can be seen or heard.',
         '- [ ] Feelings or attitudes the note itself states are kept as written; no new ones are added for any character, neither positive nor negative (no liking, being drawn to, minding, ignoring or not caring that the note did not say). Other reactions will come from the characters\' own personalities in the story.',
@@ -563,9 +565,9 @@ const PROMPT_INFO = {
     nudge: { label: '한 번만 살짝 밀기', vars: 'char, user' },
     prefInject: { label: '취향: 매 턴 들어가는 사실', vars: 'char, user, facts, open' },
     prefOpen: { label: '취향: 가끔 덧붙는 디테일', vars: 'char, user, appeal, when, show' },
-    motifRest: { label: '쉬게 하기: 방금 나왔을 때', vars: 'char, user, motifs' },
-    motifKeywords: { label: '쉬게 하기: 감지 단어 만들기', vars: 'motif, sample', fixed: true },
-    motifFind: { label: '쉬게 하기: 반복되는 것 찾기', vars: 'replies', fixed: true },
+    motifRest: { label: '우려먹기 방지: 방금 나왔을 때', vars: 'char, user, motifs' },
+    motifKeywords: { label: '우려먹기 방지: 감지 단어 만들기', vars: 'motif, sample', fixed: true },
+    motifFind: { label: '우려먹기 방지: 반복되는 것 찾기', vars: 'replies', fixed: true },
     prefExpand: { label: '취향: 풀어 쓰기', vars: 'char, user, cast, note', fixed: true },
 };
 
@@ -669,7 +671,7 @@ const PREF_FREQ = {
     mid: { label: '보통', pct: 30 },
     high: { label: '진하게', pct: 50 },
 };
-const PREF_FORMAT = 'Answer with JSON only: {"label_ko":"<short Korean label>","fact_en":"<one neutral English sentence>","tendency_en":"<one or two English sentences>","when_en":"<one English sentence>","show_en":"<two or three short examples>","keywords":["<word>", "..."]}';
+const PREF_FORMAT = 'Answer with JSON only: {"label_ko":"<short Korean label>","fact_en":"<one neutral English sentence>","tendency_en":"<one or two English sentences>","when_en":"<one English sentence>","show_en":"<two or three short examples>","keywords":["<word>", "..."],"never_en":"<one English sentence or empty>"}';
 
 function activePrefs(arc) {
     return (arc?.prefs || []).filter(p => p.on !== false && (p.fact || p.aware || p.text));
@@ -711,7 +713,7 @@ function buildPrefInjection(arc) {
     const open = prefOpenFor(arc, messageCount() + 1);
     return fillTemplate(getPrompt('prefInject'), {
         ...base,
-        facts: prefs.map(p => `- ${withNames(p.fact || p.aware || p.text)}`).join('\n'),
+        facts: prefs.map(p => [`- ${withNames(p.fact || p.aware || p.text)}`, p.neverEn || p.never ? `- Not part of this story: ${withNames(p.neverEn || p.never)}` : ''].filter(Boolean).join('\n')).join('\n'),
         open: open ? fillTemplate(getPrompt('prefOpen'), {
             ...base,
             appeal: withNames(open.appeal || open.aware),
@@ -733,7 +735,7 @@ function updatePrefInjection() {
 }
 
 function prefNote(p) {
-    return p.how ? `${p.text}\nHow the user wants it to show: ${p.how}` : p.text;
+    return [p.text, p.how ? `How the user wants it to show: ${p.how}` : '', p.never ? `What the user never wants: ${p.never}` : ''].filter(Boolean).join('\n');
 }
 
 async function expandPref(arc, text) {
@@ -754,6 +756,7 @@ async function expandPref(arc, text) {
         when: String(data.when_en ?? '').trim(),
         surface: String(data.show_en ?? '').trim(),
         keywords: Array.isArray(data.keywords) ? data.keywords.map(String).filter(Boolean).slice(0, 12) : [],
+        neverEn: String(data.never_en ?? '').trim(),
         aware: '', avoid: '',
         failed: false,
     };
@@ -1885,6 +1888,7 @@ let openLog = -1;
 
 let prefDraft = '';
 let prefDraftHow = '';
+let prefDraftNever = '';
 let prefDraftFreq = 'mid';
 let prefEditing = null;   // id of the point being edited
 let prefOpen = null;      // id whose AI reading is unfolded
@@ -1900,6 +1904,7 @@ function renderPrefCard(arc, p) {
         <div class="sb-pref edit">
             <textarea class="sb-input sb-textarea" data-pref-edit="${p.id}">${esc(p.text)}</textarea>
             <input class="sb-input" data-pref-edit-how="${p.id}" placeholder="어떻게 묻어났으면? (선택)" value="${esc(p.how || '')}">
+            <input class="sb-input" data-pref-edit-never="${p.id}" placeholder="이건 절대 싫어 (선택)" value="${esc(p.never || '')}">
             <div class="sb-row">
                 <button type="button" class="sb-btn sb-small" data-act="prefCancel">취소</button>
                 <span class="sb-grow"></span>
@@ -1914,7 +1919,7 @@ function renderPrefCard(arc, p) {
             <span class="sb-pref-label">${esc(p.label || p.text.slice(0, 20))}</span>
             <label class="sb-switch sb-switch-sm" title="이 포인트 켜기/끄기"><input type="checkbox" data-pref-on="${p.id}" ${p.on !== false ? 'checked' : ''}><span class="sb-track"><span class="sb-knob"></span></span></label>
         </div>
-        <p class="sb-pref-text">${esc(p.text)}${p.how ? `<br><span class="sb-pref-how">↳ ${esc(p.how)}</span>` : ''}</p>
+        <p class="sb-pref-text">${esc(p.text)}${p.how ? `<br><span class="sb-pref-how">↳ ${esc(p.how)}</span>` : ''}${p.never ? `<br><span class="sb-pref-never">✕ ${esc(p.never)}</span>` : ''}</p>
         <div class="sb-chips">${prefFreqChips(p.freq || 'mid', p.id)}</div>
         ${p.failed ? '<p class="sb-sub sb-warn">AI가 풀어 쓰지 못해서 적은 문장 그대로 넣고 있어요. 다시 풀어 쓰기를 눌러보세요</p>' : ''}
         <div class="sb-row">
@@ -1929,6 +1934,7 @@ function renderPrefCard(arc, p) {
             ${p.appeal ? `<p><b>둘 사이에서 이렇게 굴러가요 (가끔 덧붙어요)</b>${esc(withNames(p.appeal))}</p>` : ''}
             ${p.when ? `<p><b>이럴 때 나와요</b>${esc(withNames(p.when))}</p>` : ''}
             ${p.surface ? `<p><b>이렇게 묻어나요</b>${esc(withNames(p.surface))}</p>` : ''}
+            ${p.neverEn ? `<p><b>절대 안 나오게</b>${esc(withNames(p.neverEn))}</p>` : ''}
             ${p.keywords?.length ? `<p><b>방금 나왔는지 알아보는 단어</b>${esc(p.keywords.join(', '))}</p>` : ''}
             ${!p.fact && !p.failed ? '<p class="sb-warn">예전 방식으로 풀어 쓴 포인트예요. 🔄 다시 풀어 쓰기를 눌러주세요</p>' : ''}
         </div>` : ''}
@@ -1946,7 +1952,8 @@ function renderPrefs(arc) {
         <p class="sb-sub">좋아하는 포인트를 적어두면 사실로 늘 깔아두고, 어울리는 장면에서만 가끔 묻어나게 해요.</p>
         <div class="sb-pref-add">
             <textarea class="sb-input sb-textarea" data-pref-draft placeholder="예: 깡캐는 40대, 깡통은 20대">${esc(prefDraft)}</textarea>
-            <input class="sb-input" data-pref-how placeholder="어떻게 묻어났으면? (선택) 예: 외모는 젊고, 말투나 경험에서만" value="${esc(prefDraftHow)}">
+            <input class="sb-input" data-pref-how placeholder="어떻게 묻어났으면? (선택)" value="${esc(prefDraftHow)}">
+            <input class="sb-input" data-pref-never placeholder="이건 절대 싫어 (선택)" value="${esc(prefDraftNever)}">
             <div class="sb-chips">${prefFreqChips(prefDraftFreq, 'new')}</div>
             <button type="button" class="sb-btn sb-primary" data-act="prefAdd" ${busy ? 'disabled' : ''}>${busy === 'prefnew' ? '<i class="fa-solid fa-spinner fa-spin"></i> AI가 풀어 쓰는 중…' : '포인트 추가 ✦'}</button>
             <p class="sb-sub">은은하게 → 진하게 순으로 더 자주 묻어나요</p>
@@ -1963,7 +1970,7 @@ function renderMotifs(arc) {
     return `
     <div class="sb-card">
         <label class="sb-switch-line">
-            <span><b>🔁 자꾸 나오는 것 쉬게 하기</b><span class="sb-sub sb-block">이 채팅방에만 적용돼요</span></span>
+            <span><b>🔁 우려먹기 방지</b><span class="sb-sub sb-block">이 채팅방에만 적용돼요</span></span>
             <span class="sb-switch"><input id="sb_motifs_on" type="checkbox" ${on ? 'checked' : ''}><span class="sb-track"><span class="sb-knob"></span></span></span>
         </label>
         <p class="sb-sub">AI가 같은 물건이나 묘사를 계속 우려먹을 때 써요. 방금 나왔으면 이번에도 꼭 필요한지 AI가 판단하게 해요.</p>
@@ -2660,10 +2667,11 @@ async function onPrefClick(act, val) {
         case 'prefAdd': {
             const text = prefDraft.trim();
             if (!text) { toastr.warning('포인트를 먼저 적어주세요', 'Slow Plot'); return; }
-            const p = { id: Date.now().toString(36), text, how: prefDraftHow.trim(), freq: prefDraftFreq, on: true };
+            const p = { id: Date.now().toString(36), text, how: prefDraftHow.trim(), never: prefDraftNever.trim(), freq: prefDraftFreq, on: true };
             arc.prefs.push(p);
             prefDraft = '';
             prefDraftHow = '';
+            prefDraftNever = '';
             prefDraftFreq = 'mid';
             await expandInto(p, 'prefnew');
             break;
@@ -2688,9 +2696,10 @@ async function onPrefClick(act, val) {
             const el = document.querySelector(`#sb_root [data-pref-edit="${val}"]`);
             const text = String(el?.value ?? '').trim();
             const how = String(document.querySelector(`#sb_root [data-pref-edit-how="${val}"]`)?.value ?? '').trim();
+            const never = String(document.querySelector(`#sb_root [data-pref-edit-never="${val}"]`)?.value ?? '').trim();
             if (!text) { toastr.warning('내용을 적어주세요', 'Slow Plot'); return; }
             prefEditing = null;
-            if (text !== p.text || how !== (p.how || '')) { p.text = text; p.how = how; await expandInto(p, `pref${p.id}`); }
+            if (text !== p.text || how !== (p.how || '') || never !== (p.never || '')) { p.text = text; p.how = how; p.never = never; await expandInto(p, `pref${p.id}`); }
             break;
         }
         case 'prefRedo': {
@@ -2715,7 +2724,8 @@ function onInput(e) {
     const el = e.target;
     if (el.dataset.prefDraft !== undefined) { prefDraft = el.value; return; }
     if (el.dataset.prefHow !== undefined) { prefDraftHow = el.value; return; }
-    if (el.dataset.prefEditHow !== undefined) return;
+    if (el.dataset.prefNever !== undefined) { prefDraftNever = el.value; return; }
+    if (el.dataset.prefEditHow !== undefined || el.dataset.prefEditNever !== undefined) return;
     if (el.dataset.prefOn !== undefined) {
         if (e.type !== 'change') return;
         const arc = getArc();
@@ -2864,6 +2874,7 @@ function refresh() {
     prefOpen = null;
     prefDraft = '';
     prefDraftHow = '';
+    prefDraftNever = '';
     peeked.clear();
     const arc = hasChat() ? getArc() : null;
     activeTab = arc && arc.stages.length ? 'progress' : 'plot';
