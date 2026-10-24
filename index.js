@@ -732,6 +732,10 @@ function updatePrefInjection() {
     setExtensionPrompt(PREF_KEY, text, PROMPT_IN_PROMPT, 0, false, ROLES.system ?? 0);
 }
 
+function prefNote(p) {
+    return p.how ? `${p.text}\nHow the user wants it to show: ${p.how}` : p.text;
+}
+
 async function expandPref(arc, text) {
     const c = ctx();
     const prompt = fillTemplate(getPrompt('prefExpand'), {
@@ -785,8 +789,14 @@ function motifResting(m) {
 }
 
 function buildRestInjection(arc) {
-    if (arc.motifsOn === false) return '';
-    const resting = (arc.motifs || []).filter(m => m.on !== false && motifResting(m));
+    const resting = arc.motifsOn === false ? [] : (arc.motifs || []).filter(m => m.on !== false && motifResting(m));
+    // A taste point that just showed up gets the same "is it needed again?" check.
+    if (arc.prefsOn !== false) {
+        for (const p of activePrefs(arc)) {
+            const words = (p.keywords || []).filter(w => String(w).trim().length >= 2);
+            if (words.length && motifHits({ keywords: words }, 1)) resting.push({ text: `the detail about "${withNames(p.fact || p.label || p.text).replace(/[.。]+$/, '')}"` });
+        }
+    }
     if (!resting.length) return '';
     const c = ctx();
     return fillTemplate(getPrompt('motifRest'), { char: c.name2, user: c.name1, motifs: resting.map(m => m.text).join(', ') });
@@ -1874,6 +1884,7 @@ function renderInner(arc) {
 let openLog = -1;
 
 let prefDraft = '';
+let prefDraftHow = '';
 let prefDraftFreq = 'mid';
 let prefEditing = null;   // id of the point being edited
 let prefOpen = null;      // id whose AI reading is unfolded
@@ -1888,6 +1899,7 @@ function renderPrefCard(arc, p) {
         return `
         <div class="sb-pref edit">
             <textarea class="sb-input sb-textarea" data-pref-edit="${p.id}">${esc(p.text)}</textarea>
+            <input class="sb-input" data-pref-edit-how="${p.id}" placeholder="어떻게 묻어났으면? (선택)" value="${esc(p.how || '')}">
             <div class="sb-row">
                 <button type="button" class="sb-btn sb-small" data-act="prefCancel">취소</button>
                 <span class="sb-grow"></span>
@@ -1902,7 +1914,7 @@ function renderPrefCard(arc, p) {
             <span class="sb-pref-label">${esc(p.label || p.text.slice(0, 20))}</span>
             <label class="sb-switch sb-switch-sm" title="이 포인트 켜기/끄기"><input type="checkbox" data-pref-on="${p.id}" ${p.on !== false ? 'checked' : ''}><span class="sb-track"><span class="sb-knob"></span></span></label>
         </div>
-        <p class="sb-pref-text">${esc(p.text)}</p>
+        <p class="sb-pref-text">${esc(p.text)}${p.how ? `<br><span class="sb-pref-how">↳ ${esc(p.how)}</span>` : ''}</p>
         <div class="sb-chips">${prefFreqChips(p.freq || 'mid', p.id)}</div>
         ${p.failed ? '<p class="sb-sub sb-warn">AI가 풀어 쓰지 못해서 적은 문장 그대로 넣고 있어요. 다시 풀어 쓰기를 눌러보세요</p>' : ''}
         <div class="sb-row">
@@ -1934,6 +1946,7 @@ function renderPrefs(arc) {
         <p class="sb-sub">좋아하는 포인트를 적어두면 사실로 늘 깔아두고, 어울리는 장면에서만 가끔 묻어나게 해요.</p>
         <div class="sb-pref-add">
             <textarea class="sb-input sb-textarea" data-pref-draft placeholder="예: 깡캐는 40대, 깡통은 20대">${esc(prefDraft)}</textarea>
+            <input class="sb-input" data-pref-how placeholder="어떻게 묻어났으면? (선택) 예: 외모는 젊고, 말투나 경험에서만" value="${esc(prefDraftHow)}">
             <div class="sb-chips">${prefFreqChips(prefDraftFreq, 'new')}</div>
             <button type="button" class="sb-btn sb-primary" data-act="prefAdd" ${busy ? 'disabled' : ''}>${busy === 'prefnew' ? '<i class="fa-solid fa-spinner fa-spin"></i> AI가 풀어 쓰는 중…' : '포인트 추가 ✦'}</button>
             <p class="sb-sub">은은하게 → 진하게 순으로 더 자주 묻어나요</p>
@@ -2636,7 +2649,7 @@ async function onPrefClick(act, val) {
     const expandInto = async (p, key) => {
         busy = key; render();
         try {
-            Object.assign(p, await expandPref(arc, p.text));
+            Object.assign(p, await expandPref(arc, prefNote(p)));
         } catch (err) {
             console.error(LOG, 'pref expand failed', err);
             Object.assign(p, { label: p.label || '', fact: '', appeal: '', aware: '', when: '', surface: '', avoid: '', keywords: [], failed: true });
@@ -2647,9 +2660,10 @@ async function onPrefClick(act, val) {
         case 'prefAdd': {
             const text = prefDraft.trim();
             if (!text) { toastr.warning('포인트를 먼저 적어주세요', 'Slow Plot'); return; }
-            const p = { id: Date.now().toString(36), text, freq: prefDraftFreq, on: true };
+            const p = { id: Date.now().toString(36), text, how: prefDraftHow.trim(), freq: prefDraftFreq, on: true };
             arc.prefs.push(p);
             prefDraft = '';
+            prefDraftHow = '';
             prefDraftFreq = 'mid';
             await expandInto(p, 'prefnew');
             break;
@@ -2673,9 +2687,10 @@ async function onPrefClick(act, val) {
             const p = find(val); if (!p) return;
             const el = document.querySelector(`#sb_root [data-pref-edit="${val}"]`);
             const text = String(el?.value ?? '').trim();
+            const how = String(document.querySelector(`#sb_root [data-pref-edit-how="${val}"]`)?.value ?? '').trim();
             if (!text) { toastr.warning('내용을 적어주세요', 'Slow Plot'); return; }
             prefEditing = null;
-            if (text !== p.text) { p.text = text; await expandInto(p, `pref${p.id}`); }
+            if (text !== p.text || how !== (p.how || '')) { p.text = text; p.how = how; await expandInto(p, `pref${p.id}`); }
             break;
         }
         case 'prefRedo': {
@@ -2699,6 +2714,8 @@ async function onPrefClick(act, val) {
 function onInput(e) {
     const el = e.target;
     if (el.dataset.prefDraft !== undefined) { prefDraft = el.value; return; }
+    if (el.dataset.prefHow !== undefined) { prefDraftHow = el.value; return; }
+    if (el.dataset.prefEditHow !== undefined) return;
     if (el.dataset.prefOn !== undefined) {
         if (e.type !== 'change') return;
         const arc = getArc();
@@ -2846,6 +2863,7 @@ function refresh() {
     prefEditing = null;
     prefOpen = null;
     prefDraft = '';
+    prefDraftHow = '';
     peeked.clear();
     const arc = hasChat() ? getArc() : null;
     activeTab = arc && arc.stages.length ? 'progress' : 'plot';
