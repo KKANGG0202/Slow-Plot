@@ -521,6 +521,34 @@ const DEFAULT_PROMPTS = Object.freeze({
         'Recent messages:',
         '{{recent_messages}}',
     ].join('\n'),
+    reroll: [
+        'You are revising ONE chapter of an existing story arc for a long-form roleplay between {{char}} and {{user}}. Write a fresh version of chapter {{chapter_num}} of {{chapter_total}}. Leave every other chapter exactly as it is.',
+        '',
+        'Overall story: {{story}}',
+        'Destination: {{ending}}',
+        'Tone: {{tone}}',
+        'Things the user wants kept: {{keep}}',
+        'How {{char}} should behave: {{difficulty}}',
+        'Cast in this chat: {{cast}}',
+        '',
+        'The whole arc, for orientation:',
+        '{{outline}}',
+        '',
+        'Chapter right before this one (already fixed): {{prev_chapter}}',
+        'Detail planted in that chapter to foreshadow this one: {{prev_seed}}',
+        'Chapter right after this one (already fixed): {{next_chapter}}',
+        '',
+        'The version being replaced: {{current_chapter}}',
+        'The user\'s wish for the new version (possibly in Korean): {{direction}}',
+        '',
+        'Rules:',
+        '- Continue naturally from where the previous chapter leaves off, and end in a place from which the next chapter can begin. This chapter is the bridge between them.',
+        '- Stay inside this chapter\'s slot: do not repeat what the previous chapter already covered, and do not reach into the next chapter\'s developments or skip ahead toward the ending.',
+        '- Serve the overall story, its destination and tone. If this is the first chapter, start from where the story is now; if it is the last, arrive at the destination.',
+        '- Make it clearly different from the version being replaced, not a light rewording.',
+        '- If the user gave a wish, follow it as closely as these rules allow.',
+        '- Keep it a phase of the story that can unfold gradually over many messages, not a single scripted scene.',
+    ].join('\n'),
 });
 
 const SPICE_TEXT = {
@@ -537,6 +565,12 @@ const PLAN_FORMAT = [
     'Return JSON only, in exactly this shape and field order:',
     '{"arc":{"premise":"<the overall story in 1-2 English sentences>","ending":"<the destination in English, or empty>","tone":"<tone in English, one short phrase>","notes":"<things to keep, in English, or empty>","obstacles":"<the obstacle characters or situations in one English sentence, or empty>"},',
     ' "chapters":[{"title_en":"<short English title>","guide_en":"<2-3 English sentences on what unfolds in this chapter and how it feels>","chats":<integer>,"lead":"<who mainly drives this chapter: one name from the cast, or a side character; in a group chat, spread the spotlight across members>","mood_en":"<the emotional mood of this chapter in 1-3 English words; let it shift across chapters to form an arc>","seed_en":"<one small, concrete English detail to plant during this chapter that quietly foreshadows the next chapter without revealing it (an object, a habit, a passing remark); empty for the last chapter>","title_ko":"<the title in natural Korean>","summary_ko":"<the guide condensed into one or two natural Korean sentences>","mood_ko":"<the chapter mood in 1-3 Korean words>"}]}',
+].join('\n');
+const REROLL_FORMAT = [
+    '',
+    'Work in English first, then render the Korean fields from what you wrote in English.',
+    'Return JSON only, in exactly this shape and field order:',
+    '{"title_en":"<short English title>","guide_en":"<2-3 English sentences on what unfolds in this chapter and how it feels>","lead":"<who mainly drives this chapter: one name from the cast, or a side character>","mood_en":"<the emotional mood in 1-3 English words>","seed_en":"<one small, concrete English detail to plant during this chapter that quietly foreshadows the next chapter without revealing it; empty if this is the last chapter>","title_ko":"<the title in natural Korean>","summary_ko":"<the guide condensed into one or two natural Korean sentences>","mood_ko":"<the mood in 1-3 Korean words>"}',
 ].join('\n');
 const IDEAS_FORMAT = [
     '',
@@ -570,6 +604,7 @@ const PROMPT_INFO = {
     judgeHell: { label: '난이도: 지옥맛 판정 기준', vars: 'char, user' },
     obstacles: { label: '방해꾼 등장', vars: 'char, user, obstacle_detail' },
     inner: { label: '속마음 엿보기', vars: 'char, user, chapter, recent_messages', fixed: true },
+    reroll: { label: '단계 하나 다시 뽑기', vars: 'char, user, story, ending, tone, keep, difficulty, cast, outline, chapter_num, chapter_total, prev_chapter, prev_seed, next_chapter, current_chapter, direction', fixed: true },
     foreshadow: { label: '복선 심기', vars: 'char, user, seed' },
     breather: { label: '숨 고르기 턴', vars: 'char, user' },
     event: { label: '돌발 사건', vars: 'char, user' },
@@ -1178,6 +1213,42 @@ async function generateStages(arc) {
     }));
 }
 
+// Rewrites one chapter so it still bridges its neighbours and serves the whole arc.
+// Returns the new fields; the caller decides whether to keep them.
+async function rerollStage(arc, i, direction) {
+    const c = ctx();
+    const en = arc.arcEn ?? {};
+    const su = arc.setup;
+    const base = { char: c.name2, user: c.name1 };
+    const line = st => st ? `${st.title_en || st.title_ko}. ${st.guide_en || st.summary_ko}` : '';
+    const prev = arc.stages[i - 1];
+    const next = arc.stages[i + 1];
+    const tpl = getPrompt('reroll');
+    const prompt = fillTemplate(tpl, {
+        ...base,
+        story: en.premise || su.plot.trim(),
+        ending: en.ending || su.ending.trim(),
+        tone: en.tone || moodList(arc).join(', '),
+        keep: en.notes || su.memo.trim(),
+        difficulty: difficultyText(arc, base),
+        cast: castNames().join(', '),
+        outline: arc.stages.map((st, k) => `${k + 1}. ${k === i ? '(this chapter, to be rewritten)' : (st.title_en || st.title_ko)}`).join('\n'),
+        chapter_num: i + 1,
+        chapter_total: arc.stages.length,
+        prev_chapter: prev ? line(prev) : 'none (this is the first chapter)',
+        prev_seed: prev?.seed_en || '',
+        next_chapter: next ? line(next) : 'none (this is the last chapter)',
+        current_chapter: line(arc.stages[i]),
+        direction: String(direction || '').trim(),
+    }) + '\n' + REROLL_FORMAT;
+    const data = parseJson(await askLLM('You are a story planner for long-form collaborative roleplay. Output only valid JSON.', prompt, 2000));
+    const out = {};
+    for (const k of ['title_en', 'guide_en', 'lead', 'mood_en', 'seed_en', 'title_ko', 'summary_ko', 'mood_ko']) out[k] = String(data[k] ?? '').trim();
+    if (!out.title_ko && !out.summary_ko) throw new Error('새 단계가 비어 있음');
+    if (!next) out.seed_en = '';
+    return out;
+}
+
 async function translateStage(arc, st) {
     const c = ctx();
     const en = arc.arcEn ?? {};
@@ -1433,6 +1504,7 @@ async function maybeJudge(force = false) {
 
 let busy = '';            // '', 'generate', 'translate'
 let editing = -1;
+let rerollDraft = null;   // { i, data, dir }: a re-rolled version shown in the edit form until saved or cancelled
 let wiOpen = false;
 let moreOpen = false;   // "더 세밀하게" fold on the plot tab
 let advMoreOpen = false;   // "고급" fold on the settings tab
@@ -1737,27 +1809,37 @@ function renderStage(arc, st, i) {
     const cls = isCur ? 'cur' : (isDone ? 'done' : '');
 
     if (editing === i) {
+        const draft = rerollDraft && rerollDraft.i === i ? rerollDraft : null;
+        const v = k => draft ? (draft.data[k] ?? '') : (st[k] || '');
+        const canReroll = !isDone || isCur;
         return `
         <div class="sb-stage edit">
             <div class="sb-edit">
-                <label class="sb-sub sb-block">제목<input class="sb-input" data-edit="title_ko" value="${esc(st.title_ko)}"></label>
-                <label class="sb-sub sb-block">내용<textarea class="sb-input sb-textarea" data-edit="summary_ko">${esc(st.summary_ko)}</textarea></label>
+                ${canReroll ? `<div class="sb-reroll">
+                    <label class="sb-sub sb-block">🎲 이 단계만 다시 뽑기 <span>(앞뒤 단계와 전체 줄거리에 맞춰서 새로 짜요)</span>
+                        <textarea class="sb-input sb-textarea" data-reroll-dir placeholder="원하는 방향이 있으면 써주세요 (안 써도 돼요)&#10;예: 깡통이 먼저 마음을 들키는 쪽으로">${esc(draft?.dir ?? '')}</textarea>
+                    </label>
+                    <button type="button" class="sb-btn sb-small" data-act="rerollStage" ${busy ? 'disabled' : ''}>${busy === 'reroll' ? '<i class="fa-solid fa-spinner fa-spin"></i> 다시 뽑는 중…' : (draft ? '한 번 더 뽑기' : '다시 뽑기')}</button>
+                    ${draft ? '<p class="sb-sub">새로 뽑은 내용이 아래에 들어갔어요. 마음에 들면 <b>저장</b>, 아니면 <b>취소</b>를 눌러요.</p>' : ''}
+                </div>` : ''}
+                <label class="sb-sub sb-block">제목<input class="sb-input" data-edit="title_ko" value="${esc(v('title_ko'))}"></label>
+                <label class="sb-sub sb-block">내용<textarea class="sb-input sb-textarea" data-edit="summary_ko">${esc(v('summary_ko'))}</textarea></label>
                 <div class="sb-group">
                     <label class="sb-sub sb-block" for="sb_lead_${i}">이 단계를 이끄는 인물 <span>(비우면 자유)</span></label>
-                    <input id="sb_lead_${i}" class="sb-input" data-edit="lead" placeholder="예: ${esc(castNames()[0] || '깡통')}" value="${esc(st.lead || '')}">
+                    <input id="sb_lead_${i}" class="sb-input" data-edit="lead" placeholder="예: ${esc(castNames()[0] || '깡통')}" value="${esc(v('lead'))}">
                     <div class="sb-chips">${castNames().map(n => `<button type="button" class="sb-chip" data-act="pickLead" data-value="${esc(n)}">${esc(n)}</button>`).join('')}</div>
                 </div>
                 <label class="sb-sub sb-block">이 단계 분위기 <span>(비우면 전체 분위기만)</span>
-                    <input class="sb-input" data-edit="mood_ko" placeholder="예: 달달 → 불안" value="${esc(st.mood_ko || '')}">
+                    <input class="sb-input" data-edit="mood_ko" placeholder="예: 달달 → 불안" value="${esc(v('mood_ko'))}">
                 </label>
                 ${aiOnly() ? '' : `<label class="sb-sub sb-block">이 단계 챗 수 <span>(비우면 자동 · 지금 계획 약 ${displayBudgets(arc)[i] ?? '?'}챗)</span>
                     <input class="sb-input sb-num" type="number" min="1" max="2000" data-edit="chats" placeholder="자동" value="${isFixed(st) ? esc(st.chats) : ''}">
                 </label>`}
                 <details class="sb-en">
                     <summary>AI가 실제로 읽는 문장 (영어)</summary>
-                    <label class="sb-sub sb-block">Title<input class="sb-input" data-edit="title_en" value="${esc(st.title_en)}"></label>
-                    <label class="sb-sub sb-block">Guide<textarea class="sb-input sb-textarea" data-edit="guide_en">${esc(st.guide_en)}</textarea></label>
-                    <label class="sb-sub sb-block">복선 (Foreshadowing seed)<textarea class="sb-input sb-textarea" data-edit="seed_en">${esc(st.seed_en || '')}</textarea></label>
+                    <label class="sb-sub sb-block">Title<input class="sb-input" data-edit="title_en" value="${esc(v('title_en'))}"></label>
+                    <label class="sb-sub sb-block">Guide<textarea class="sb-input sb-textarea" data-edit="guide_en">${esc(v('guide_en'))}</textarea></label>
+                    <label class="sb-sub sb-block">복선 (Foreshadowing seed)<textarea class="sb-input sb-textarea" data-edit="seed_en">${esc(v('seed_en'))}</textarea></label>
                     <p class="sb-sub">한국어만 고치면 영어는 저장할 때 자동으로 다시 번역돼요. 영어를 직접 고치면 그대로 써요.</p>
                 </details>
                 <div class="sb-row">
@@ -2567,8 +2649,24 @@ async function onClick(e) {
             break;
         }
 
-        case 'edit': editing = Number(val); break;
-        case 'cancelEdit': editing = -1; break;
+        case 'edit': editing = Number(val); rerollDraft = null; break;
+        case 'cancelEdit': editing = -1; rerollDraft = null; break;
+        case 'rerollStage': {
+            const i = editing;
+            const dir = btn.closest('.sb-edit')?.querySelector('[data-reroll-dir]')?.value ?? '';
+            const chatId = c.getCurrentChatId();
+            rerollDraft = rerollDraft && rerollDraft.i === i ? { ...rerollDraft, dir } : null;
+            busy = 'reroll'; render();
+            try {
+                const data = await rerollStage(arc, i, dir);
+                if (c.getCurrentChatId() !== chatId || editing !== i) return;
+                rerollDraft = { i, data, dir };
+            } catch (err) {
+                console.error(LOG, 'reroll failed', err);
+                toastr.warning('다시 뽑기 실패: ' + err.message, 'Slow Plot');
+            } finally { busy = ''; render(); }
+            return;
+        }
         case 'addStage':
             arc.stages.push({ title_ko: '', summary_ko: '', title_en: '', guide_en: '', suggested: null, chats: null });
             editing = arc.stages.length - 1;
@@ -2605,7 +2703,8 @@ async function onClick(e) {
             const next = { title_ko: get('title_ko'), summary_ko: get('summary_ko'), title_en: get('title_en'), guide_en: get('guide_en') };
             st.lead = get('lead');
             const moodKo = get('mood_ko');
-            if (moodKo !== (st.mood_ko || '')) { st.mood_ko = moodKo; st.mood_en = ''; }
+            const draft = rerollDraft && rerollDraft.i === editing ? rerollDraft.data : null;
+            if (moodKo !== (st.mood_ko || '')) { st.mood_ko = moodKo; st.mood_en = draft && moodKo === draft.mood_ko ? draft.mood_en : ''; }
             const chatsVal = Math.round(Number(get('chats')));
             st.chats = get('chats') && chatsVal > 0 ? chatsVal : null;
             if (!next.title_ko && !next.summary_ko) { toastr.warning('제목이나 내용을 써주세요', 'Slow Plot'); return; }
@@ -2620,6 +2719,7 @@ async function onClick(e) {
                 } finally { busy = ''; }
             }
             editing = -1;
+            rerollDraft = null;
             break;
         }
         default: return;

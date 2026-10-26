@@ -511,3 +511,8 @@
 #sb_root .sb-rest { font-size: 11px; color: var(--sb-purple); background: #fff; border-radius: 999px; padding: 1px 7px; margin-left: 4px; white-space: nowrap; }
 #sb_root .sb-pref-how { color: var(--sb-purple); font-size: 12px; }
 #sb_root .sb-pref-never { color: #B4532A; font-size: 12px; }
+
+/* re-roll one stage (inside the stage edit form) */
+#sb_root .sb-reroll { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px dashed var(--sb-line); border-radius: 10px; }
+#sb_root .sb-reroll .sb-btn { align-self: flex-start; }
+#sb_root .sb-reroll .sb-sub { margin: 0; }
