@@ -14,6 +14,7 @@ const defaultSettings = Object.freeze({
     enabled: true,
     judgeInterval: 5,    // check every N bot replies
     minRatio: 0.7,       // never advance before this share of the stage's budget
+    aiOnly: false,       // advance by the AI judge alone: no chat-count budgets or minimum stay
     depth: 4,            // injection depth in chat
     role: 'system',
     judgeWindow: 20,     // how many recent messages the judge reads
@@ -86,6 +87,7 @@ function newArc() {
         base: 0,              // message count when the arc started
         stageStarts: [],      // progress value at each stage's start
         lastJudge: 0,
+        aiPhase: 0,           // AI-only mode: the judge's last estimate (0..1) of how far the current chapter has come
         hold: false,          // stay mode: keep injecting the current chapter but never advance
         frozenAt: null,       // bot-reply count when paused/held; replies meanwhile are not counted
         countMode: 'idx',     // progress = bot replies after chat index baseIndex
@@ -290,7 +292,13 @@ function displayBudgets(arc) {
     return out;
 }
 
+function aiOnly() {
+    return !!getSettings().aiOnly;
+}
+
+// AI-only mode has no budget, so the judge's own estimate stands in for it.
 function ripeness(arc) {
+    if (aiOnly()) return Math.max(0, Number(arc.aiPhase) || 0);
     return (progress(arc) - stageStart(arc)) / stageBudget(arc);
 }
 
@@ -307,12 +315,14 @@ function diff(arc) {
 }
 
 function effRipeness(arc) {
-    return ripeness(arc) * diff(arc).pace;
+    // The judge already weighs difficulty in AI-only mode.
+    return aiOnly() ? ripeness(arc) : ripeness(arc) * diff(arc).pace;
 }
 
 // Short stages get checked more often: never wait longer than about a quarter of the stage.
 function judgeInterval(arc) {
     const setting = Math.max(1, Number(getSettings().judgeInterval) || 5);
+    if (aiOnly()) return setting;
     return Math.max(1, Math.min(setting, Math.round(stageBudget(arc) / 4) || 1));
 }
 
@@ -535,8 +545,9 @@ const IDEAS_FORMAT = [
 ].join('\n');
 const INNER_FIELDS = '"inner_ko": "<one short Korean line: {{char}}\'s private, unspoken feeling right now, in {{char}}\'s own inner voice>", "warmth": <integer 0-100: how open {{char}} currently is toward {{user}}>';
 
-function judgeFormat(regress, inner) {
+function judgeFormat(regress, inner, phase) {
     const fields = ['"done": true or false', '"reason_ko": "<one short Korean sentence explaining why>"', '"detail_ko": "<2-4 Korean sentences: what has already happened toward this chapter, and what is still missing before it can be called done>"'];
+    if (phase) fields.push('"progress": <0-100, how far the story has come toward this chapter being done: 0 = it has not started at all, 50 = clearly underway, 100 = done>');
     if (regress) fields.push('"regress": <true only if {{user}}\'s recent actions clearly pushed things back to before this chapter began, otherwise false>');
     if (inner) fields.push(INNER_FIELDS);
     return `\n\nAnswer with JSON only: {${fields.join(', ')}}`;
@@ -1267,15 +1278,21 @@ async function judgeStage(arc) {
         next_chapter: next ? `${next.title_en}. ${next.guide_en}` : '',
         recent_messages: transcript,
         difficulty_judge: difficultyJudgeText(arc, base),
-    }) + '\n\n' + fillTemplate(judgeFormat(canRegress, arc.setup.innerHint), base);
+    }) + '\n\n' + fillTemplate(judgeFormat(canRegress, arc.setup.innerHint, aiOnly()), base);
     const data = parseJson(await askLLM('You are a careful story analyst. Output only valid JSON.', prompt, 1500));
     return {
         done: data.done === true || data.done === 'true',
         regress: canRegress && (data.regress === true || data.regress === 'true'),
         reason: String(data.reason_ko ?? ''),
         detail: String(data.detail_ko ?? ''),
+        phase: readPhase(data.progress),
         inner: arc.setup.innerHint ? readInner(data) : null,
     };
+}
+
+function readPhase(v) {
+    const n = Number(String(v ?? '').replace('%', ''));
+    return Number.isFinite(n) ? Math.min(1, Math.max(0, n / 100)) : null;
 }
 
 function readInner(data) {
@@ -1314,6 +1331,7 @@ function advance(arc, manual = false) {
         arc.stageStarts[arc.current] = progress(arc);
         arc.stageStarts.length = arc.current + 1;
         arc.lastJudge = progress(arc);
+        arc.aiPhase = 0;
         pushLog(arc, true, `${arc.current + 1}단계${stageTitle(arc, arc.current)} 시작${manual ? ' (직접 넘김)' : ''}`);
         if (manual || getSettings().stageToast !== false) toastr.success(`${arc.current + 1}단계로 넘어갔어요!`, 'Slow Plot');
     } else {
@@ -1340,6 +1358,7 @@ function removeStage(arc, i) {
         } else {
             arc.stageStarts[arc.current] = progress(arc);
             arc.lastJudge = progress(arc);
+            arc.aiPhase = 0;
         }
     }
     arc.stageStarts.length = Math.min(arc.stageStarts.length, arc.current + 1);
@@ -1354,6 +1373,7 @@ function goBack(arc) {
         arc.current--;
         arc.stageStarts.length = arc.current + 1;
     }
+    arc.aiPhase = 0.7;   // back on a chapter that had already come far
     arc.lastJudge = progress(arc);
     pushLog(arc, true, `${arc.current + 1}단계로 되돌림`);
 }
@@ -1368,7 +1388,7 @@ async function maybeJudge(force = false) {
     const p = progress(arc);
     if (!force) {
         if (p - arc.lastJudge < judgeInterval(arc)) return;
-        if (ripeness(arc) < judgeGate(arc)) return;
+        if (!aiOnly() && ripeness(arc) < judgeGate(arc)) return;
     }
     const chatId = ctx().getCurrentChatId();
     judging = true;
@@ -1384,11 +1404,13 @@ async function maybeJudge(force = false) {
             return;
         }
         if (res.inner) arc.inner = { ...res.inner, at: progress(arc), seen: false };
-        const tooEarly = res.done && ripeness(arc) < judgeGate(arc);
+        if (aiOnly() && res.phase != null) arc.aiPhase = res.phase;
+        const tooEarly = res.done && !aiOnly() && ripeness(arc) < judgeGate(arc);
         if (res.regress && !res.done) {
             pushLog(arc, false, '뒤로 밀려났어요 — ' + res.reason, res.detail);
             goBack(arc);
             arc.stageStarts[arc.current] = progress(arc);   // the earlier chapter has to be earned again
+            arc.aiPhase = 0;
             if (getSettings().stageToast !== false) toastr.warning(`깡통 마음이 닫혔어요… ${arc.current + 1}단계로 돌아갔어요`, 'Slow Plot');
         } else {
             pushLog(arc, res.done && !tooEarly, (res.done ? (tooEarly ? '이뤄졌지만 아직 이르니 조금 더 머물게요 — ' : '완료! ') : '아직이에요 — ') + res.reason, res.detail);
@@ -1481,7 +1503,7 @@ function renderSetup(arc) {
             </label>
         </div>
         <div class="sb-field">
-            <p class="sb-label">몇 챗 동안? <span class="sb-sub">(봇 답변 기준. 내 메시지는 안 세요)</span></p>
+            <p class="sb-label">몇 챗 동안? <span class="sb-sub">${aiOnly() ? '(AI 판정만 모드라 이야기 크기 참고용이에요. 넘어가는 건 AI가 정해요)' : '(봇 답변 기준. 내 메시지는 안 세요)'}</span></p>
             <div class="sb-chips">${lenChips}</div>
             ${s.lengthCustom ? `<input class="sb-input sb-num" type="number" min="5" step="5" data-bind="length" value="${esc(s.length)}">` : ''}
         </div>
@@ -1489,7 +1511,7 @@ function renderSetup(arc) {
             <p class="sb-label">몇 단계로?</p>
             <div class="sb-chips">${stageChips}</div>
             ${s.stageCustom ? `<label class="sb-sub sb-block">단계 수 (2~15)<input class="sb-input sb-num" type="number" min="2" max="15" data-bind="stageCount" value="${esc(s.stageCount === 'auto' ? 10 : s.stageCount)}"></label>` : ''}
-            ${s.stageCount !== 'auto' ? `<p class="sb-sub">평균 단계당 약 ${Math.round(Number(s.length) / Number(s.stageCount))}챗. 내용에 따라 AI가 길고 짧게 나눠줘요</p>` : ''}
+            ${s.stageCount !== 'auto' && !aiOnly() ? `<p class="sb-sub">평균 단계당 약 ${Math.round(Number(s.length) / Number(s.stageCount))}챗. 내용에 따라 AI가 길고 짧게 나눠줘요</p>` : ''}
         </div>
         ${renderRefs(arc)}
         <div class="sb-more">
@@ -1728,9 +1750,9 @@ function renderStage(arc, st, i) {
                 <label class="sb-sub sb-block">이 단계 분위기 <span>(비우면 전체 분위기만)</span>
                     <input class="sb-input" data-edit="mood_ko" placeholder="예: 달달 → 불안" value="${esc(st.mood_ko || '')}">
                 </label>
-                <label class="sb-sub sb-block">이 단계 챗 수 <span>(비우면 자동 · 지금 계획 약 ${displayBudgets(arc)[i] ?? '?'}챗)</span>
+                ${aiOnly() ? '' : `<label class="sb-sub sb-block">이 단계 챗 수 <span>(비우면 자동 · 지금 계획 약 ${displayBudgets(arc)[i] ?? '?'}챗)</span>
                     <input class="sb-input sb-num" type="number" min="1" max="2000" data-edit="chats" placeholder="자동" value="${isFixed(st) ? esc(st.chats) : ''}">
-                </label>
+                </label>`}
                 <details class="sb-en">
                     <summary>AI가 실제로 읽는 문장 (영어)</summary>
                     <label class="sb-sub sb-block">Title<input class="sb-input" data-edit="title_en" value="${esc(st.title_en)}"></label>
@@ -1792,7 +1814,7 @@ function renderProgress(arc) {
     else if (arc.status === 'done') status = '모든 단계 완료! 이야기가 끝까지 왔어요';
     else {
         const toJudge = Math.max(0, judgeInterval(arc) - (p - arc.lastJudge));
-        const minLeft = Math.max(0, Math.ceil(stageBudget(arc) * judgeGate(arc) - (p - stageStart(arc))));
+        const minLeft = aiOnly() ? 0 : Math.max(0, Math.ceil(stageBudget(arc) * judgeGate(arc) - (p - stageStart(arc))));
         const judgeText = judging ? '지금 판정하는 중… (모델에 따라 1분쯤 걸려요)' : `다음 판정까지 ${Math.max(minLeft, toJudge, 1)}챗`;
         if (arc.status === 'paused') {
             status = `<b>${arc.current + 1}단계에서 일시정지 중</b><br>AI한테 아무것도 안 보내고, 멈춘 동안의 챗은 세지 않아요`;
@@ -1844,7 +1866,7 @@ function renderProgress(arc) {
     <div class="sb-card">
         <div class="sb-card-row">
             <p class="sb-label sb-m0">${arc.status === 'draft' ? '이런 과정은 어때?' : '지금 여기까지 왔어'}</p>
-            <span class="sb-sub">${arc.status === 'draft' ? `${arc.setup.length}챗` : `${p} / ${arc.setup.length}챗`}</span>
+            <span class="sb-sub">${aiOnly() ? (arc.status === 'draft' ? 'AI 판정만' : `${p}챗째 · AI 판정만`) : arc.status === 'draft' ? `${arc.setup.length}챗` : `${p} / ${arc.setup.length}챗`}</span>
         </div>
         <div class="sb-hearts">${hearts}</div>
         <div class="sb-status">${status}</div>
@@ -2042,9 +2064,13 @@ function renderAdvanced() {
         <label class="sb-sub sb-block">판정 주기 (봇 답변 몇 개마다)
             <input class="sb-input sb-num" type="number" min="2" max="100" data-setting="judgeInterval" value="${s.judgeInterval}">
         </label>
-        <label class="sb-sub sb-block">최소 머무르기 (단계별 배정량의 %)
-            <input class="sb-input sb-num" type="number" min="0" max="100" step="5" data-setting="minRatio" value="${Math.round(s.minRatio * 100)}">
+        <label class="sb-switch-line">
+            <span><b>챗 수 말고 AI 판정만으로 넘기기</b><span class="sb-sub sb-block">켜면 단계별 챗 수 배정과 최소 머무르기 없이, 판정 주기마다 AI가 '이 단계 이뤄졌나'만 보고 넘겨요. 페이스 안내도 판정 때 AI가 본 진행도로 정해져요<br>⚠️ AI 판정에만 맡기는 거라 모델에 따라 생각보다 빨리 넘어갈 수 있어요</span></span>
+            <span class="sb-switch"><input id="sb_ai_only" type="checkbox" ${s.aiOnly ? 'checked' : ''}><span class="sb-track"><span class="sb-knob"></span></span></span>
         </label>
+        ${s.aiOnly ? '' : `<label class="sb-sub sb-block">최소 머무르기 (단계별 배정량의 %)
+            <input class="sb-input sb-num" type="number" min="0" max="100" step="5" data-setting="minRatio" value="${Math.round(s.minRatio * 100)}">
+        </label>`}
         <label class="sb-sub sb-block">판정할 때 읽는 최근 메시지 수
             <input class="sb-input sb-num" type="number" min="4" max="60" data-setting="judgeWindow" value="${s.judgeWindow}">
         </label>
@@ -2187,7 +2213,7 @@ function renderQuick() {
             <button type="button" class="sbq-inner ${arc.inner.seen ? '' : 'sb-blur'}" data-quick="inner">${arc.inner.seen ? '💭' : '💌'} “${esc(arc.inner.text)}”${Number.isFinite(arc.inner.warmth) ? ` · ${arc.inner.warmth}°` : ''}</button>` : '';
         body = `
             <div class="sbq-stage">${arc.current + 1}/${arc.stages.length} · ${stageHidden(arc, arc.current) ? '🔒 ???' : esc(st?.title_ko || '')}</div>
-            <div class="sbq-meta">${esc(state)} · ${p}/${arc.setup.length}챗</div>
+            <div class="sbq-meta">${esc(state)} · ${aiOnly() ? `${p}챗째` : `${p}/${arc.setup.length}챗`}</div>
             ${flags.length ? `<div class="sbq-flags">${flags.map(esc).join(' · ')}</div>` : ''}
             ${inner}
             <div class="sbq-grid">
@@ -2499,7 +2525,7 @@ async function onClick(e) {
         }
         case 'start':
             if (editing >= 0) { toastr.info('수정 중인 단계를 먼저 저장해 주세요', 'Slow Plot'); return; }
-            Object.assign(arc, { status: 'running', current: 0, baseIndex: ctx().chat.length, base: 0, countMode: 'idx', stageStarts: [0], lastJudge: 0, hold: false, frozenAt: null, log: [] });
+            Object.assign(arc, { status: 'running', current: 0, baseIndex: ctx().chat.length, base: 0, countMode: 'idx', stageStarts: [0], lastJudge: 0, aiPhase: 0, hold: false, frozenAt: null, log: [] });
             pushLog(arc, true, `1단계${stageTitle(arc, 0)} 시작`);
             break;
         case 'pause': pauseArc(arc); break;
@@ -2758,6 +2784,10 @@ function onInput(e) {
     }
     if (el.id === 'sb_enabled') { if (e.type === 'change') setEnabled(el.checked); return; }
     if (el.id === 'sb_hide_stages') { if (e.type === 'change') setHideStages(el.checked); return; }
+    if (el.id === 'sb_ai_only') {
+        if (e.type === 'change') { getSettings().aiOnly = el.checked; ctx().saveSettingsDebounced(); updateInjection(); render(); renderQuick(); }
+        return;
+    }
     if (el.id === 'sb_stage_toast') {
         if (e.type === 'change') { getSettings().stageToast = el.checked; ctx().saveSettingsDebounced(); }
         return;
